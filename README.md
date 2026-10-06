@@ -12,68 +12,40 @@
 
 <hr />
 
-**Rojo Team Create** is a version of [Rojo](https://github.com/rojo-rbx/rojo) whose Studio plugin works with Team Create. Every collaborator can sync their own local codebase into the same Team Create place without overwriting each other.
-
-Everything else works like regular Rojo, so the [Rojo documentation](https://rojo.space/docs) still applies.
+**Rojo Team Create** is [Rojo](https://github.com/rojo-rbx/rojo) with a Studio plugin built for Team Create: everyone syncs their own code into the same place without overwriting each other. Outside Team Create it works exactly like Rojo, and the [Rojo docs](https://rojo.space/docs) still apply.
 
 ## How it works
 
-When you connect in a Team Create place, the plugin **stages** your changes instead of writing them into the DataModel.
+In Team Create, the plugin **stages** your changes instead of writing them into the place.
 
-- **Staged changes stay on your machine.** They don't replicate to other Team Create users and aren't saved with the place. Other developers syncing their own codebase aren't affected by your changes, and you aren't affected by theirs.
-- **Play includes your staged changes.** Press **Play** in the Rojo Team Create panel to start a local playtest that runs your staged code. You can bind keyboard shortcuts to the *Rojo: Play With Staged Changes* and *Rojo: Run With Staged Changes* actions.
-- **Deploy applies them for everyone.** Press **Deploy** to write your staged changes into the place. They then save to the place file and replicate to everyone who isn't syncing. They're also used when you publish the game or start a Team Test.
+- **Staged** changes stay on your machine and don't replicate to anyone else.
+- **Play** in the plugin panel starts a local playtest with your staged changes. Studio's own Play button only uses deployed code.
+- **Deploy** writes your staged changes into the place, so they save, replicate to everyone, and are used when you publish or Team Test.
 
-The count at the top right of the panel shows how many instances are staged. Click it to see exactly what would change. The count updates as you edit files, and also when the place changes underneath you, for example when a collaborator deploys.
-
-Studio's own Play button tests the deployed version of the place. If you have staged changes when you use it, Rojo Team Create warns you in the Output window that they aren't included.
-
-Outside of Team Create, the plugin syncs exactly like Rojo.
+Click the staged count in the panel to see what would change. Staging can be turned off with the **Stage Changes in Team Create** setting.
 
 ## Installing
 
-1. Download `RojoTeamCreate.rbxm` from the [latest release](https://github.com/Developer-One-Studios/rojo-team-create/releases/latest).
-2. In Studio, open **Plugins > Plugins Folder** and put `RojoTeamCreate.rbxm` in it. Restart Studio if the plugin doesn't appear.
-3. Uninstall or disable the regular Rojo plugin. If both are installed, both will try to sync the same project.
-4. Install the regular Rojo server, version 7.7 or newer, with [Rokit](https://github.com/rojo-rbx/rokit) (`rokit add rojo-rbx/rojo`) or from the [Rojo releases](https://github.com/rojo-rbx/rojo/releases).
-5. Run `rojo serve` in your project and press **Connect** in the Rojo Team Create panel.
-
-## Settings
-
-| Setting | Default | Description |
-| --- | --- | --- |
-| Stage Changes in Team Create | On | Keep synced changes local until you deploy them. Turn this off to sync straight into the place like regular Rojo. |
-
-All of Rojo's other settings are still available.
+1. Download `RojoTeamCreate.rbxm` from the [latest release](https://github.com/Developer-One-Studios/rojo-team-create/releases/latest) and put it in Studio's **Plugins > Plugins Folder**.
+2. Remove or disable the regular Rojo plugin in your own Studio.
+3. Use the regular Rojo server, version 7.7 or newer (`rokit add rojo-rbx/rojo`), and run `rojo serve`.
 
 ## Things to know
 
-- **Rojo's Play briefly shares your changes.** Game scripts in a playtest start running before any plugin loads, so a plugin can't swap your code in afterwards. Instead, the plugin writes your staged changes into the place, starts the playtest, and reverts them as soon as the playtest reports back. Collaborators can see your staged changes for those few seconds (about 4–5 seconds in testing).
-- **Two-way sync is off while staging.** Otherwise a collaborator's deploy would be written back into your files.
-- **The sync lock isn't used while staging.** Several collaborators can be connected at once, since nobody writes to the place until they deploy.
-- **Staged changes are recomputed from the whole project** on each change, so very large projects may take a moment to update the staged count.
+- **Rojo's Play briefly shares your changes.** Studio starts game scripts before plugins load, so the plugin writes your staged changes into the place while the playtest starts (about 4–5 seconds), then reverts them.
+- **While staging, two-way sync is off and the sync lock isn't used**, so several people can be connected at once.
 
 ## Working with people on the regular Rojo plugin
 
-Rojo Team Create and the regular Rojo plugin can be used in the same Team Create place, but only Rojo Team Create users get staging.
-
-- **Regular Rojo syncs straight into the place.** Changes from someone on the regular plugin go live for everyone right away, so Rojo Team Create users see them as deployed changes.
-- **Deploys and regular syncs can overwrite each other.** A Rojo Team Create deploy replaces whatever a regular Rojo user synced to the same scripts, and a regular Rojo user who connects syncs the place back to match their files.
-- **The sync lock only applies to regular Rojo users.** Only one regular Rojo user can sync at a time. Rojo Team Create users don't take the lock, so they never block anyone and are never blocked.
-- **Regular Rojo users should keep two-way sync off.** With it on, their plugin writes any change in the place back to their files. That includes Rojo Team Create deploys and the few seconds while a staged Play is starting.
-
-If people work on separate parts of the game, mixing the two plugins is mostly fine. For everyone to be protected from each other, the whole team should use Rojo Team Create.
+Both plugins work in the same place, but only Rojo Team Create users get staging. Regular Rojo syncs go live for everyone right away, and they can overwrite Rojo Team Create deploys to the same scripts (and the other way around). Regular Rojo users should keep two-way sync off. For full protection, the whole team should use Rojo Team Create.
 
 ## Building from source
 
-Clone this repository, run `git submodule update --init --recursive`, then build the plugin straight into your Studio plugins folder:
-
 ```bash
+git submodule update --init --recursive
 rojo build plugin.project.json --plugin RojoTeamCreate.rbxm
 ```
 
-See the [contribution guide](CONTRIBUTING.md) for working on the server and running tests.
-
 ## License
 
-Rojo Team Create is based on [Rojo](https://github.com/rojo-rbx/rojo) and is available under the terms of the Mozilla Public License, Version 2.0. See [LICENSE.txt](LICENSE.txt) for details.
+Based on [Rojo](https://github.com/rojo-rbx/rojo) and available under the Mozilla Public License 2.0. See [LICENSE.txt](LICENSE.txt).
