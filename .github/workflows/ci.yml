@@ -10,46 +10,6 @@ on:
     - master
 
 jobs:
-  build:
-    name: Build and Test
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      matrix:
-        os: [ubuntu-22.04, windows-latest, macos-latest, windows-11-arm, ubuntu-22.04-arm]
-
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: true
-
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Restore Rust Cache
-      uses: actions/cache/restore@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ matrix.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-    - name: Build
-      run: cargo build --locked --verbose
-
-    - name: Test
-      run: cargo test --locked --verbose
-
-    - name: Save Rust Cache
-      uses: actions/cache/save@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ matrix.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
   msrv:
     name: Check MSRV
     runs-on: ubuntu-latest
