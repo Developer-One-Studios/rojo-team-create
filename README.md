@@ -1,45 +1,68 @@
 <div align="center">
-    <a href="https://rojo.space"><img src="assets/brand_images/logo-512.png" alt="Rojo" height="217" /></a>
+    <a href="https://github.com/Developer-One-Studios/rojo-team-create"><img src="assets/brand_images/logo-512.png" alt="Rojo Team Create" height="217" /></a>
 </div>
 
 <div>&nbsp;</div>
 
 <div align="center">
-    <a href="https://github.com/rojo-rbx/rojo/actions"><img src="https://github.com/rojo-rbx/rojo/workflows/CI/badge.svg" alt="Actions status" /></a>
-    <a href="https://crates.io/crates/rojo"><img src="https://img.shields.io/crates/v/rojo.svg?label=latest%20release" alt="Latest server version" /></a>
+    <a href="https://github.com/Developer-One-Studios/rojo-team-create/actions"><img src="https://github.com/Developer-One-Studios/rojo-team-create/workflows/CI/badge.svg" alt="Actions status" /></a>
+    <a href="https://github.com/Developer-One-Studios/rojo-team-create/releases/latest"><img src="https://img.shields.io/github/v/release/Developer-One-Studios/rojo-team-create?label=latest%20release" alt="Latest release" /></a>
     <a href="https://rojo.space/docs"><img src="https://img.shields.io/badge/docs-website-brightgreen.svg" alt="Rojo Documentation" /></a>
 </div>
 
 <hr />
 
-**Rojo** is a tool designed to enable Roblox developers to use professional-grade software engineering tools.
+**Rojo Team Create** is a version of [Rojo](https://github.com/rojo-rbx/rojo) whose Studio plugin works with Team Create. Every collaborator can sync their own local codebase into the same Team Create place without overwriting each other.
 
-With Rojo, it's possible to use industry-leading tools like **Visual Studio Code** and **Git**.
+Everything else works like regular Rojo, so the [Rojo documentation](https://rojo.space/docs) still applies.
 
-Rojo is designed for power users who want to use the best tools available for building games, libraries, and plugins.
+## How it works
 
-## Features
-Rojo enables:
+When you connect in a Team Create place, the plugin **stages** your changes instead of writing them into the DataModel.
 
-* Working on scripts and models from the filesystem, in your favorite editor
-* Versioning your game, library, or plugin using Git or another VCS
-* Streaming `rbxmx` and `rbxm` models into your game in real time
-* Packaging and deploying your project to Roblox.com from the command line
-* Pulling Instances from Roblox place and model files back into an existing Rojo project with `rojo syncback`
+- **Staged changes stay on your machine.** They don't replicate to other Team Create users and aren't saved with the place. Other developers syncing their own codebase aren't affected by your changes, and you aren't affected by theirs.
+- **Play includes your staged changes.** Press **Play** in the Rojo Team Create panel to start a local playtest that runs your staged code. You can bind keyboard shortcuts to the *Rojo: Play With Staged Changes* and *Rojo: Run With Staged Changes* actions.
+- **Deploy applies them for everyone.** Press **Deploy** to write your staged changes into the place. They then save to the place file and replicate to everyone who isn't syncing. They're also used when you publish the game or start a Team Test.
 
-Rojo also has an optional two-way sync setting in the Studio plugin for syncing supported Studio edits back to the filesystem.
+The count at the top right of the panel shows how many instances are staged. Click it to see exactly what would change. The count updates as you edit files, and also when the place changes underneath you, for example when a collaborator deploys.
 
-Some workflows, like fully automatic conversion of every existing game into a Rojo project, are still limited and may require manual project configuration.
+Studio's own Play button tests the deployed version of the place. If you have staged changes when you use it, Rojo Team Create warns you in the Output window that they aren't included.
 
-## [Documentation](https://rojo.space/docs)
-Documentation is hosted in the [rojo.space repository](https://github.com/rojo-rbx/rojo.space).
+Outside of Team Create, the plugin syncs exactly like Rojo.
 
-## Contributing
-Check out our [contribution guide](CONTRIBUTING.md) for detailed instructions for helping work on Rojo!
+## Installing
 
-Pull requests are welcome!
+1. Download `RojoTeamCreate.rbxm` from the [latest release](https://github.com/Developer-One-Studios/rojo-team-create/releases/latest).
+2. In Studio, open **Plugins > Plugins Folder** and put `RojoTeamCreate.rbxm` in it. Restart Studio if the plugin doesn't appear.
+3. Uninstall or disable the regular Rojo plugin. If both are installed, both will try to sync the same project.
+4. Install the Rojo server, version 7.7 or newer. You can use [Rokit](https://github.com/rojo-rbx/rokit) (`rokit add rojo-rbx/rojo`) or download `rojo` from the same release.
+5. Run `rojo serve` in your project and press **Connect** in the Rojo Team Create panel.
 
-Rojo supports Rust 1.88 and newer. The minimum supported version of Rust is based on the latest versions of the dependencies that Rojo has.
+## Settings
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| Stage Changes in Team Create | On | Keep synced changes local until you deploy them. Turn this off to sync straight into the place like regular Rojo. |
+
+All of Rojo's other settings are still available.
+
+## Things to know
+
+- **Rojo's Play briefly shares your changes.** Game scripts in a playtest start running before any plugin loads, so a plugin can't swap your code in afterwards. Instead, the plugin writes your staged changes into the place, starts the playtest, and reverts them as soon as the playtest reports back. Collaborators can see your staged changes for those few seconds (about 4–5 seconds in testing).
+- **Two-way sync is off while staging.** Otherwise a collaborator's deploy would be written back into your files.
+- **The sync lock isn't used while staging.** Several collaborators can be connected at once, since nobody writes to the place until they deploy.
+- **Staged changes are recomputed from the whole project** on each change, so very large projects may take a moment to update the staged count.
+
+## Building from source
+
+Clone this repository, run `git submodule update --init --recursive`, then build the plugin straight into your Studio plugins folder:
+
+```bash
+rojo build plugin.project.json --plugin RojoTeamCreate.rbxm
+```
+
+See the [contribution guide](CONTRIBUTING.md) for working on the server and running tests.
 
 ## License
-Rojo is available under the terms of the Mozilla Public License, Version 2.0. See [LICENSE.txt](LICENSE.txt) for details.
+
+Rojo Team Create is based on [Rojo](https://github.com/rojo-rbx/rojo) and is available under the terms of the Mozilla Public License, Version 2.0. See [LICENSE.txt](LICENSE.txt) for details.
