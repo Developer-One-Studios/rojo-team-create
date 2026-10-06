@@ -291,7 +291,7 @@ local function StagedChanges(props)
 			style = "Bordered",
 			enabled = not busy,
 			transparency = props.transparency,
-			layoutOrder = 2,
+			layoutOrder = 1,
 			onClick = function()
 				if not busy then
 					props.onSetUp()
@@ -303,33 +303,12 @@ local function StagedChanges(props)
 			}),
 		}),
 
-		-- With the runtime loader, Studio's own Play button already includes
-		-- the staged changes.
-		Play = if props.loaderInstalled
-			then nil
-			else e(TextButton, {
-				text = "Play",
-				style = "Bordered",
-				enabled = not busy,
-				transparency = props.transparency,
-				layoutOrder = 1,
-				onClick = function()
-					if not busy then
-						props.onPlay()
-					end
-				end,
-			}, {
-				Tip = e(Tooltip.Trigger, {
-					text = "Start a local playtest that includes your staged changes",
-				}),
-			}),
-
 		Deploy = e(TextButton, {
 			text = "Deploy",
 			style = "Solid",
 			enabled = canDeploy,
 			transparency = props.transparency,
-			layoutOrder = 3,
+			layoutOrder = 2,
 			onClick = function()
 				-- Still clickable with nothing staged, so it can say so.
 				if not busy then
@@ -550,11 +529,9 @@ function ConnectedPage:render()
 				then e(StagedChanges, {
 					stagedPatch = self.props.stagedPatch,
 					busy = self.props.stagedBusy,
-					loaderInstalled = self.props.loaderInstalled,
 					transparency = self.props.transparency,
 					layoutOrder = 3,
 
-					onPlay = self.props.onPlay,
 					onSetUp = self.props.onSetUp,
 					onDeploy = self.props.onDeploy,
 				})

@@ -136,7 +136,7 @@ function SettingsPage:render()
 			StageChangesInTeamCreate = e(Setting, {
 				id = "stageChangesInTeamCreate",
 				name = "Stage Changes in Team Create",
-				description = "In Team Create, keep synced changes local until you deploy them. Use Rojo's Play button to test them.",
+				description = "In Team Create, keep synced changes local until you deploy them. Needs the loader script, added with Set up.",
 				locked = self.props.syncActive,
 				lockedTooltip = "(Cannot change while currently syncing. Disconnect first.)",
 				transparency = self.props.transparency,

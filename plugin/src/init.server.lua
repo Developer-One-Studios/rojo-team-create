@@ -2,10 +2,6 @@ if not plugin then
 	return
 end
 
--- The edit DataModel is holding staged changes in Team Create until this runs,
--- so do it before anything slower like mounting the UI.
-require(script.StagedPlaytest).signalReadyIfStaged()
-
 local Rojo = script:FindFirstAncestor("Rojo")
 local Packages = Rojo.Packages
 

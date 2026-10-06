@@ -32,8 +32,8 @@ Making a new release? Simply add the new header with the version and date undern
 ## Unreleased
 
 * LocalizationTables no longer report as changed when nothing changes. [(#1333)]
-* Added staged syncing for Team Create. While in Team Create, the plugin keeps changes out of the place until you press Deploy, so collaborators syncing their own code don't overwrite each other. Use the plugin's Play button to start a local playtest that includes your staged changes. This can be turned off with the "Stage Changes in Team Create" setting.
-* Added an optional runtime loader for Team Create places. With it, staged changes never replicate, and Studio's own Play button tests them. Set it up with the **Set up** button in the plugin panel.
+* Added staged syncing for Team Create. While in Team Create, the plugin keeps changes out of the place until you press Deploy, so collaborators syncing their own code don't overwrite each other. This can be turned off with the "Stage Changes in Team Create" setting.
+* Added a runtime loader, which staging requires. Staged changes never replicate, and Studio's own Play button tests them. Add it to a place with the **Set up** button in the plugin panel.
 * Rebranded the plugin as Rojo Team Create, with a yellow accent color and a new logo and toolbar icons. Update checks now look at the Rojo Team Create releases.
 
 [#1333]: https://github.com/rojo-rbx/rojo/pull/1333

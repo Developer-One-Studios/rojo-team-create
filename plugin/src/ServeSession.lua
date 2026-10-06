@@ -3,8 +3,6 @@ local RunService = game:GetService("RunService")
 local ChangeHistoryService = game:GetService("ChangeHistoryService")
 local SerializationService = game:GetService("SerializationService")
 local Selection = game:GetService("Selection")
-local HttpService = game:GetService("HttpService")
-local ScriptEditorService = game:GetService("ScriptEditorService")
 
 local Packages = script.Parent.Parent.Packages
 local Log = require(Packages.Log)
@@ -20,18 +18,12 @@ local PatchSet = require(script.Parent.PatchSet)
 local Reconciler = require(script.Parent.Reconciler)
 local strict = require(script.Parent.strict)
 local Settings = require(script.Parent.Settings)
-local StagedPlaytest = require(script.Parent.StagedPlaytest)
 local RuntimeLoader = require(script.Parent.RuntimeLoader)
 local orderSwaps = require(script.Parent.orderSwaps)
-local decodeValue = require(script.Parent.Reconciler.decodeValue)
 
 -- File changes tend to arrive in bursts, so wait briefly before recomputing the
 -- staged changes so that a burst only causes one refresh.
 local STAGED_REFRESH_DELAY = 0.25
-
--- How long a staged playtest waits for script sources to be written before
--- starting anyway.
-local SOURCE_WRITE_TIMEOUT = 5
 
 local Status = strict("Session.Status", {
 	NotStarted = "NotStarted",
@@ -89,82 +81,6 @@ local function removeDataModelRename(patch, instanceMap)
 	end
 end
 
---[[
-	Script sources are written with ScriptEditorService, which happens in
-	another thread and isn't part of ChangeHistoryService recordings. These
-	helpers let staged playtests wait for and revert source changes themselves.
-]]
-local function backUpStagedSources(patch, instanceMap)
-	local backups = {}
-
-	for _, update in patch.updated do
-		local instance = instanceMap.fromIds[update.id]
-		if
-			update.changedClassName == nil
-			and update.changedProperties.Source ~= nil
-			and instance ~= nil
-			and instance:IsA("LuaSourceContainer")
-		then
-			table.insert(backups, {
-				instance = instance,
-				source = ScriptEditorService:GetEditorSource(instance),
-			})
-		end
-	end
-
-	return backups
-end
-
-local function getExpectedSources(patch, instanceMap)
-	local expected = {}
-
-	local function addExpected(id, encodedSource)
-		local instance = instanceMap.fromIds[id]
-		if encodedSource == nil or instance == nil or not instance:IsA("LuaSourceContainer") then
-			return
-		end
-
-		local success, source = decodeValue(encodedSource, instanceMap)
-		if success then
-			table.insert(expected, {
-				instance = instance,
-				source = source,
-			})
-		end
-	end
-
-	for id, virtualInstance in patch.added do
-		addExpected(id, virtualInstance.Properties.Source)
-	end
-	for _, update in patch.updated do
-		addExpected(update.id, update.changedProperties.Source)
-	end
-
-	return expected
-end
-
-local function waitForSources(expected, timeout)
-	local deadline = os.clock() + timeout
-
-	while true do
-		local pending = false
-		for _, entry in expected do
-			if ScriptEditorService:GetEditorSource(entry.instance) ~= entry.source then
-				pending = true
-				break
-			end
-		end
-
-		if not pending then
-			return true
-		elseif os.clock() > deadline then
-			return false
-		end
-
-		task.wait()
-	end
-end
-
 local function rejectIfModelProject(patch, instanceMap)
 	for _, update in patch.updated do
 		if update.id == instanceMap.fromInstances[game] and update.changedClassName ~= nil then
@@ -191,8 +107,8 @@ local validateServeOptions = t.strictInterface({
 	apiContext = t.table,
 	twoWaySync = t.boolean,
 	-- When true, changes from the server are staged instead of being written
-	-- to the DataModel. They are only written by `deployStaged`, and are
-	-- temporarily included in playtests started by `startStagedPlaytest`.
+	-- to the DataModel. They are only written by `deployStaged`, and reach
+	-- playtests through the runtime loader.
 	stageChanges = t.optional(t.boolean),
 })
 
@@ -739,8 +655,7 @@ end
 
 --[[
 	Keeps the runtime loader's overlay matching the staged changes, so that
-	any playtest, including ones started with Studio's own Play button,
-	includes them.
+	playtests include them.
 ]]
 function ServeSession:__updateOverlay(patch, instanceMap)
 	if not self.__loaderInstalled then
@@ -860,10 +775,14 @@ end
 ]]
 function ServeSession:deployStaged()
 	return self:__withFreshStaged(function(patch)
-		if self.__loaderInstalled then
-			-- A newer plugin may have changed how the loader works.
-			RuntimeLoader.writeLoader()
+		-- Without the loader, deployed scripts would go in turned on, and
+		-- staged changes couldn't reach playtests.
+		if not self.__loaderInstalled then
+			return Promise.reject(RuntimeLoader.MISSING_MESSAGE)
 		end
+
+		-- A newer plugin may have changed how the loader works.
+		RuntimeLoader.writeLoader()
 
 		if PatchSet.isEmpty(patch) then
 			return patch, PatchSet.newEmpty()
@@ -901,115 +820,6 @@ end
 function ServeSession:removeRuntimeLoader()
 	return self:__withFreshStaged(function()
 		RuntimeLoader.uninstall()
-	end)
-end
-
---[[
-	Starts a local playtest that includes the staged changes without leaving
-	them in the DataModel. `mode` is a StagedPlaytest.Mode.
-
-	The changes have to be applied to the edit DataModel until Studio has taken
-	its snapshot for the playtest. Team Create replicates them during that
-	window, and then replicates the revert. Resolves with the staged patch and
-	how waiting for the snapshot ended.
-]]
-function ServeSession:startStagedPlaytest(mode)
-	if not StagedPlaytest.isEditModeActive() then
-		return Promise.reject("A playtest is already running")
-	end
-
-	return self:__withFreshStaged(function(patch)
-		local token = HttpService:GenerateGUID(false)
-		local args = StagedPlaytest.createArgs(token, self.__apiContext.__baseUrl)
-
-		-- The runtime loader puts the staged changes into every playtest by
-		-- itself, so there's nothing to apply.
-		if self.__loaderInstalled or PatchSet.isEmpty(patch) then
-			StagedPlaytest.launch(mode, args)
-			return patch, if self.__loaderInstalled then "loader" else "empty"
-		end
-
-		local recording = ChangeHistoryService:TryBeginRecording("Rojo: Staged playtest")
-		if not recording then
-			return Promise.reject("Could not start a staged playtest because another change is being recorded")
-		end
-
-		local sourceBackups = backUpStagedSources(patch, self.__instanceMap)
-
-		-- Cancelling the recording undoes everything we're about to do except
-		-- for script sources, which we put back ourselves.
-		local reverted = false
-		local function revert()
-			if reverted then
-				return
-			end
-			reverted = true
-			ChangeHistoryService:FinishRecording(recording, Enum.FinishRecordingOperation.Cancel)
-
-			for _, backup in sourceBackups do
-				local success, err = pcall(
-					ScriptEditorService.UpdateSourceAsync,
-					ScriptEditorService,
-					backup.instance,
-					function()
-						return backup.source
-					end
-				)
-				if not success then
-					Log.warn("Could not restore the source of {}: {}", backup.instance:GetFullName(), err)
-				end
-			end
-		end
-
-		local applySuccess, unappliedPatch = pcall(self.__reconciler.applyPatch, self.__reconciler, patch)
-		if not applySuccess then
-			revert()
-			return Promise.reject(unappliedPatch)
-		end
-
-		if not PatchSet.isEmpty(unappliedPatch) then
-			Log.warn(
-				"Some staged changes could not be included in the playtest:\n{}",
-				PatchSet.humanSummary(self.__instanceMap, unappliedPatch)
-			)
-		end
-
-		-- Source writes finish in another thread, and the playtest would miss
-		-- any that haven't landed by the time Studio takes its snapshot.
-		if not waitForSources(getExpectedSources(patch, self.__instanceMap), SOURCE_WRITE_TIMEOUT) then
-			Log.warn("Some staged script sources may not be included in the playtest")
-		end
-
-		local startTime = os.clock()
-		local handle = StagedPlaytest.launch(mode, args)
-
-		return StagedPlaytest.waitForSnapshot(token, handle)
-			:andThen(function(outcome)
-				revert()
-
-				Log.debug(
-					"Reverted staged playtest changes after {}s ({})",
-					string.format("%.2f", os.clock() - startTime),
-					outcome
-				)
-
-				if handle.error ~= nil then
-					return Promise.reject(handle.error)
-				end
-
-				if outcome == "timeout" then
-					Log.warn(
-						"Rojo did not hear back from the playtest, so it reverted the staged changes after a timeout."
-							.. " Make sure the Rojo plugin is allowed to run in playtests."
-					)
-				end
-
-				return patch, outcome
-			end)
-			:catch(function(err)
-				revert()
-				return Promise.reject(err)
-			end)
 	end)
 end
 

@@ -156,6 +156,8 @@ local SCRIPT_CLASSES = {
 
 local RuntimeLoader = {}
 
+RuntimeLoader.MISSING_MESSAGE = "Press Set up to add the loader script first."
+
 RuntimeLoader.LOADER_NAME = LOADER_NAME
 RuntimeLoader.OVERLAY_NAME = OVERLAY_NAME
 RuntimeLoader.ENABLE_TAG = ENABLE_TAG

@@ -26,7 +26,6 @@ local preloadAssets = require(Plugin.preloadAssets)
 local soundPlayer = require(Plugin.soundPlayer)
 local ignorePlaceIds = require(Plugin.ignorePlaceIds)
 local isTeamCreate = require(Plugin.isTeamCreate)
-local StagedPlaytest = require(Plugin.StagedPlaytest)
 local RuntimeLoader = require(Plugin.RuntimeLoader)
 local timeUtil = require(Plugin.timeUtil)
 local Theme = require(script.Theme)
@@ -144,7 +143,6 @@ function App:init()
 		stagedPatch = PatchSet.newEmpty(),
 		stagedPatchTree = nil,
 		stagedTimestamp = os.time(),
-		loaderInstalled = false,
 	})
 	self.offeredRuntimeLoader = {}
 
@@ -156,7 +154,7 @@ function App:init()
 		end)
 		if success then
 			self.editModeConnection = editModeSignal:Connect(function()
-				if not StagedPlaytest.isEditModeActive() then
+				if not StudioTestService.EditModeActive then
 					self:onPlaytestStarted()
 				end
 			end)
@@ -585,23 +583,12 @@ function App:sendSyncReminder(message: string, shownActions: { string })
 	})
 end
 
-function App:getRunningConnectionUrl(): string?
-	-- Staged playtests pass the URL through their test args, since in Team
-	-- Create the workspace attribute would replicate to collaborators.
-	local stagedPlaytest = StagedPlaytest.getCurrent()
-	if stagedPlaytest and stagedPlaytest.serverUrl then
-		return stagedPlaytest.serverUrl
-	end
-
-	return workspace:GetAttribute("__Rojo_ConnectionUrl")
-end
-
 function App:isAutoConnectPlaytestServerAvailable()
 	return RunService:IsRunning()
 		and RunService:IsStudio()
 		and RunService:IsServer()
 		and Settings:get("autoConnectPlaytestServer")
-		and self:getRunningConnectionUrl() ~= nil
+		and workspace:GetAttribute("__Rojo_ConnectionUrl")
 end
 
 function App:isAutoConnectPlaytestServerWriteable()
@@ -628,7 +615,7 @@ function App:clearRunningConnectionInfo()
 end
 
 function App:useRunningConnectionInfo()
-	local connectionInfo = self:getRunningConnectionUrl()
+	local connectionInfo = workspace:GetAttribute("__Rojo_ConnectionUrl")
 	if not connectionInfo then
 		return
 	end
@@ -698,7 +685,6 @@ function App:startSession()
 			stagedPatch = stagedPatch,
 			stagedPatchTree = PatchTree.build(stagedPatch, instanceMap, { "Property", "Current", "Staged" }),
 			stagedTimestamp = DateTime.now().UnixTimestamp,
-			loaderInstalled = serveSession:isLoaderInstalled(),
 		})
 	end)
 
@@ -789,7 +775,6 @@ function App:startSession()
 				stagedBusy = false,
 				stagedPatch = PatchSet.newEmpty(),
 				stagedPatchTree = Roact.None,
-				loaderInstalled = false,
 			})
 
 			-- Details being present indicates that this
@@ -952,6 +937,13 @@ function App:deployStagedChanges()
 		return
 	end
 
+	if not serveSession:isLoaderInstalled() then
+		self:addNotification({
+			text = RuntimeLoader.MISSING_MESSAGE,
+		})
+		return
+	end
+
 	self:setState({
 		stagedBusy = true,
 	})
@@ -977,6 +969,14 @@ function App:deployStagedChanges()
 			})
 		end)
 		:catch(function(err)
+			-- The loader can go missing after the panel last checked for it.
+			if err == RuntimeLoader.MISSING_MESSAGE then
+				self:addNotification({
+					text = RuntimeLoader.MISSING_MESSAGE,
+				})
+				return
+			end
+
 			Log.warn("Could not deploy staged changes: {}", err)
 			self:addNotification({
 				text = "Could not deploy staged changes: " .. tostring(err),
@@ -984,37 +984,6 @@ function App:deployStagedChanges()
 			})
 		end)
 		:finally(function()
-			self:setState({
-				stagedBusy = false,
-			})
-		end)
-end
-
-function App:startStagedPlaytest(mode)
-	local serveSession = self:getStagingSession()
-	if serveSession == nil or self.state.stagedBusy then
-		return
-	end
-
-	self:setState({
-		stagedBusy = true,
-	})
-
-	-- Set before the playtest starts so that onPlaytestStarted knows this one
-	-- includes the staged changes.
-	self.startingStagedPlaytest = true
-
-	serveSession
-		:startStagedPlaytest(mode)
-		:catch(function(err)
-			Log.warn("Could not start a playtest with staged changes: {}", err)
-			self:addNotification({
-				text = "Could not start a playtest with staged changes: " .. tostring(err),
-				timeout = 10,
-			})
-		end)
-		:finally(function()
-			self.startingStagedPlaytest = false
 			self:setState({
 				stagedBusy = false,
 			})
@@ -1029,7 +998,7 @@ function App:offerRuntimeLoader(projectName: string)
 	self.offeredRuntimeLoader[projectName] = true
 
 	self:addNotification({
-		text = "Set up the loader script? Your staged changes would then never leave your machine.",
+		text = "This place needs the loader script for staging. Set it up now?",
 		timeout = 30,
 		actions = {
 			SetUp = {
@@ -1136,10 +1105,6 @@ function App:removeRuntimeLoader()
 end
 
 function App:onPlaytestStarted()
-	if self.startingStagedPlaytest then
-		return
-	end
-
 	local serveSession = self:getStagingSession()
 	if serveSession == nil or serveSession:isLoaderInstalled() then
 		-- With the runtime loader, every playtest already includes the
@@ -1152,12 +1117,10 @@ function App:onPlaytestStarted()
 		return
 	end
 
-	-- Studio's own Play buttons can't include staged changes, and this warning
-	-- is the only way to notice from inside the playtest.
 	Log.warn(
-		"This playtest does not include your {} staged Rojo changes. Use Play in the Rojo panel"
-			.. " (or the 'Rojo: Play With Staged Changes' action) to test them.",
-		stagedCount
+		"This playtest does not include your {} staged Rojo changes. {}",
+		stagedCount,
+		RuntimeLoader.MISSING_MESSAGE
 	)
 end
 
@@ -1257,14 +1220,9 @@ function App:render()
 						stagedPatch = self.state.stagedPatch,
 						stagedPatchTree = self.state.stagedPatchTree,
 						stagedTimestamp = self.state.stagedTimestamp,
-						loaderInstalled = self.state.loaderInstalled,
 
 						onDeploy = function()
 							self:deployStagedChanges()
-						end,
-
-						onPlay = function()
-							self:startStagedPlaytest(StagedPlaytest.Mode.Play)
 						end,
 
 						onSetUp = function()
@@ -1372,28 +1330,6 @@ function App:render()
 				bindable = true,
 				onTriggered = function()
 					self:deployStagedChanges()
-				end,
-			}),
-
-			playStagedAction = e(StudioPluginAction, {
-				name = "RojoPlayStaged",
-				title = "Rojo: Play With Staged Changes",
-				description = "Starts a local Play test that includes your staged Rojo changes",
-				icon = Assets.Images.PluginButton,
-				bindable = true,
-				onTriggered = function()
-					self:startStagedPlaytest(StagedPlaytest.Mode.Play)
-				end,
-			}),
-
-			runStagedAction = e(StudioPluginAction, {
-				name = "RojoRunStaged",
-				title = "Rojo: Run With Staged Changes",
-				description = "Starts a local Run test that includes your staged Rojo changes",
-				icon = Assets.Images.PluginButton,
-				bindable = true,
-				onTriggered = function()
-					self:startStagedPlaytest(StagedPlaytest.Mode.Run)
 				end,
 			}),
 

@@ -19,7 +19,7 @@
 In Team Create, the plugin **stages** your changes instead of writing them into the place.
 
 - **Staged** changes stay on your machine and don't replicate to anyone else.
-- **Play** in the plugin panel starts a local playtest with your staged changes. Studio's own Play button only uses deployed code.
+- **Studio's Play button** tests your staged changes, through the runtime loader.
 - **Deploy** writes your staged changes into the place, so they save, replicate to everyone, and are used when you publish or Team Test.
 
 Click the staged count in the panel to see what would change. Staging can be turned off with the **Stage Changes in Team Create** setting.
@@ -32,7 +32,7 @@ Click the staged count in the panel to see what would change. Staging can be tur
 
 ## Runtime loader
 
-Each place can opt in to the runtime loader with the **Set up** button in the Rojo panel. Your staged changes then never leave your machine, and Studio's own Play button tests them.
+Staging needs the runtime loader. Press **Set up** in the Rojo panel once per place to add it; until then, Deploy won't run.
 
 - Rojo-managed scripts are deployed turned off, and a small `ROJO_TEAM_CREATE_LOADER` script in ServerScriptService turns them on when a server starts.
 - Your staged changes are kept in a Camera in ServerStorage, which Team Create doesn't replicate. The loader swaps them in, so they're only in playtests you start yourself.
@@ -40,7 +40,6 @@ Each place can opt in to the runtime loader with the **Set up** button in the Ro
 
 ## Things to know
 
-- **Without the runtime loader, Rojo's Play briefly shares your changes.** Studio starts game scripts before plugins load, so the plugin writes your staged changes into the place while the playtest starts (about 4–5 seconds), then reverts them.
 - **While staging, two-way sync is off and the sync lock isn't used**, so several people can be connected at once.
 
 ## Working with people on the regular Rojo plugin
