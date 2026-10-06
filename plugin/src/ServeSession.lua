@@ -245,7 +245,7 @@ function ServeSession.new(options)
 		-- A collaborator adding or removing the runtime loader changes how
 		-- staged changes are computed and tested.
 		local function onServerScriptServiceChildChanged(child)
-			if child.Name == RuntimeLoader.LOADER_NAME then
+			if RuntimeLoader.isLoaderName(child.Name) then
 				self:__scheduleStagedRefresh()
 			end
 		end
@@ -697,6 +697,14 @@ end
 ]]
 function ServeSession:__repairLoader()
 	RuntimeLoader.removeDuplicateLoaders()
+
+	if RuntimeLoader.hasLegacyLoader() then
+		-- A loader from an earlier build looks for the overlay under its old
+		-- name, so it would leave staged changes out of playtests.
+		RuntimeLoader.writeLoader()
+		Log.info("Upgraded this place's runtime loader to ROJO_TEAM_CREATE_LOADER.")
+		return
+	end
 
 	if not RuntimeLoader.isMissing() then
 		return

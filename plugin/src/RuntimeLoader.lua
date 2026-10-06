@@ -30,19 +30,33 @@ local decodeValue = require(script.Parent.Reconciler.decodeValue)
 local reify = require(script.Parent.Reconciler.reify)
 local setProperty = require(script.Parent.Reconciler.setProperty)
 
-local LOADER_NAME = "RojoTeamCreateLoader"
-local OVERLAY_NAME = "RojoTeamCreateLocal"
+local LOADER_NAME = "ROJO_TEAM_CREATE_LOADER"
+local OVERLAY_NAME = "ROJO_TEAM_CREATE_LOCAL"
 local ENABLE_TAG = "RojoTeamCreateEnable"
+
+-- Folders inside the overlay. These have to match the loader's source.
+local REMOVE_FOLDER_NAME = "REMOVE"
+local REPLACE_FOLDER_NAME = "REPLACE"
+local ADD_FOLDER_NAME = "ADD"
+
+-- Names from before these instances were renamed, so places that were set up
+-- with an earlier build keep working and get upgraded.
+local LEGACY_LOADER_NAMES = {
+	RojoTeamCreateLoader = true,
+}
+local LEGACY_OVERLAY_NAMES = {
+	RojoTeamCreateLocal = true,
+}
 
 -- This runs as a normal game script, so it can only use APIs available at
 -- runtime. It must not yield, so that it finishes before any player joins.
 local LOADER_SOURCE = [[
--- RojoTeamCreateLoader v1
+-- ROJO_TEAM_CREATE_LOADER v2
 -- Added by the Rojo Team Create plugin. Don't edit or delete this script: the
 -- game's Rojo-managed scripts are saved turned off, and this turns them on.
 --
 -- In a playtest started by someone syncing with Rojo Team Create, it first
--- swaps in their staged changes from ServerStorage.RojoTeamCreateLocal, which
+-- swaps in their staged changes from ServerStorage.ROJO_TEAM_CREATE_LOCAL, which
 -- only exists on their machine. Everywhere else, it starts the deployed scripts.
 
 local CollectionService = game:GetService("CollectionService")
@@ -54,7 +68,7 @@ local ENABLE_TAG = "RojoTeamCreateEnable"
 local function attempt(description, callback)
 	local success, err = pcall(callback)
 	if not success then
-		warn(`[RojoTeamCreateLoader] Could not {description}: {err}`)
+		warn(`[ROJO_TEAM_CREATE_LOADER] Could not {description}: {err}`)
 	end
 end
 
@@ -65,11 +79,11 @@ local function getTarget(entry)
 	return nil
 end
 
-local overlay = ServerStorage:FindFirstChild("RojoTeamCreateLocal")
+local overlay = ServerStorage:FindFirstChild("ROJO_TEAM_CREATE_LOCAL")
 if overlay ~= nil and overlay:IsA("Camera") then
 	local replacements = {}
 
-	local removeFolder = overlay:FindFirstChild("Remove")
+	local removeFolder = overlay:FindFirstChild("REMOVE")
 	if removeFolder ~= nil then
 		for _, entry in removeFolder:GetChildren() do
 			local target = getTarget(entry)
@@ -81,7 +95,7 @@ if overlay ~= nil and overlay:IsA("Camera") then
 		end
 	end
 
-	local replaceFolder = overlay:FindFirstChild("Replace")
+	local replaceFolder = overlay:FindFirstChild("REPLACE")
 	if replaceFolder ~= nil then
 		for _, entry in replaceFolder:GetChildren() do
 			local target = getTarget(entry)
@@ -99,7 +113,7 @@ if overlay ~= nil and overlay:IsA("Camera") then
 		end
 	end
 
-	local addFolder = overlay:FindFirstChild("Add")
+	local addFolder = overlay:FindFirstChild("ADD")
 	if addFolder ~= nil then
 		for _, entry in addFolder:GetChildren() do
 			local parent = if entry:IsA("ObjectValue") then entry.Value else nil
@@ -124,7 +138,7 @@ for _, object in CollectionService:GetTagged(ENABLE_TAG) do
 end
 
 if #Players:GetPlayers() > 0 then
-	warn("[RojoTeamCreateLoader] A player joined before the game's scripts were turned on, so some of their scripts may not run.")
+	warn("[ROJO_TEAM_CREATE_LOADER] A player joined before the game's scripts were turned on, so some of their scripts may not run.")
 end
 ]]
 
@@ -150,13 +164,37 @@ RuntimeLoader.LOADER_NAME = LOADER_NAME
 RuntimeLoader.OVERLAY_NAME = OVERLAY_NAME
 RuntimeLoader.ENABLE_TAG = ENABLE_TAG
 
-function RuntimeLoader.findLoader(): Script?
-	local loader = ServerScriptService:FindFirstChild(LOADER_NAME)
-	if loader ~= nil and loader:IsA("Script") then
-		return loader
+function RuntimeLoader.isLoaderName(name: string): boolean
+	return name == LOADER_NAME or LEGACY_LOADER_NAMES[name] == true
+end
+
+local function findLoaders(): { Script }
+	local loaders = {}
+	for _, child in ServerScriptService:GetChildren() do
+		if RuntimeLoader.isLoaderName(child.Name) and child:IsA("Script") then
+			-- Prefer loaders that already use the current name.
+			if child.Name == LOADER_NAME then
+				table.insert(loaders, 1, child)
+			else
+				table.insert(loaders, child)
+			end
+		end
 	end
 
-	return nil
+	return loaders
+end
+
+function RuntimeLoader.findLoader(): Script?
+	return findLoaders()[1]
+end
+
+--[[
+	Whether the loader was set up by an earlier build that used different
+	instance names, and so needs upgrading.
+]]
+function RuntimeLoader.hasLegacyLoader(): boolean
+	local loader = RuntimeLoader.findLoader()
+	return loader ~= nil and loader.Name ~= LOADER_NAME
 end
 
 function RuntimeLoader.isInstalled(): boolean
@@ -186,12 +224,7 @@ end
 	restoring it at the same time. Returns how many were removed.
 ]]
 function RuntimeLoader.removeDuplicateLoaders(): number
-	local loaders = {}
-	for _, child in ServerScriptService:GetChildren() do
-		if child.Name == LOADER_NAME and child:IsA("Script") then
-			table.insert(loaders, child)
-		end
-	end
+	local loaders = findLoaders()
 
 	if #loaders <= 1 then
 		return 0
@@ -212,8 +245,11 @@ end
 ]]
 function RuntimeLoader.isPluginOwned(instance: Instance): boolean
 	local success, owned = pcall(function()
-		return (instance.Name == LOADER_NAME and instance.Parent == ServerScriptService)
-			or (instance.Name == OVERLAY_NAME and instance.Parent == ServerStorage)
+		return (RuntimeLoader.isLoaderName(instance.Name) and instance.Parent == ServerScriptService)
+			or (
+				(instance.Name == OVERLAY_NAME or LEGACY_OVERLAY_NAMES[instance.Name] == true)
+				and instance.Parent == ServerStorage
+			)
 	end)
 
 	return success and owned
@@ -234,7 +270,11 @@ end
 ]]
 function RuntimeLoader.writeLoader(): boolean
 	local loader = RuntimeLoader.findLoader()
-	if loader ~= nil and ScriptEditorService:GetEditorSource(loader) == LOADER_SOURCE then
+	if
+		loader ~= nil
+		and loader.Name == LOADER_NAME
+		and ScriptEditorService:GetEditorSource(loader) == LOADER_SOURCE
+	then
 		return false
 	end
 
@@ -245,6 +285,7 @@ function RuntimeLoader.writeLoader(): boolean
 			loader.Source = LOADER_SOURCE
 			loader.Parent = ServerScriptService
 		else
+			loader.Name = LOADER_NAME
 			ScriptEditorService:UpdateSourceAsync(loader, function()
 				return LOADER_SOURCE
 			end)
@@ -344,9 +385,10 @@ function RuntimeLoader.getScriptConversion(patch)
 end
 
 function RuntimeLoader.clearOverlay()
-	local overlay = ServerStorage:FindFirstChild(OVERLAY_NAME)
-	if overlay ~= nil and overlay:IsA("Camera") then
-		overlay:Destroy()
+	for _, child in ServerStorage:GetChildren() do
+		if (child.Name == OVERLAY_NAME or LEGACY_OVERLAY_NAMES[child.Name] == true) and child:IsA("Camera") then
+			child:Destroy()
+		end
 	end
 end
 
@@ -439,15 +481,15 @@ function RuntimeLoader.writeOverlay(patch, instanceMap): number
 	overlay.Name = OVERLAY_NAME
 
 	local removeFolder = Instance.new("Folder")
-	removeFolder.Name = "Remove"
+	removeFolder.Name = REMOVE_FOLDER_NAME
 	removeFolder.Parent = overlay
 
 	local replaceFolder = Instance.new("Folder")
-	replaceFolder.Name = "Replace"
+	replaceFolder.Name = REPLACE_FOLDER_NAME
 	replaceFolder.Parent = overlay
 
 	local addFolder = Instance.new("Folder")
-	addFolder.Name = "Add"
+	addFolder.Name = ADD_FOLDER_NAME
 	addFolder.Parent = overlay
 
 	for _, removed in patch.removed do

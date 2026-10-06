@@ -157,7 +157,7 @@ function App:init()
 			self:warnIfLoaderMissing()
 		end)
 		self.loaderRemovedConnection = ServerScriptService.ChildRemoved:Connect(function(child)
-			if child.Name == RuntimeLoader.LOADER_NAME then
+			if RuntimeLoader.isLoaderName(child.Name) then
 				self:warnIfLoaderMissing()
 			end
 		end)
