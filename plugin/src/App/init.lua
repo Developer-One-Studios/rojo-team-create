@@ -767,13 +767,7 @@ function App:startSession()
 				toolbarIcon = Assets.Images.PluginButtonConnected,
 			})
 			self:addNotification({
-				text = if stageChanges
-					then string.format(
-						"Connected to session '%s' at %s.\nChanges are staged locally until you deploy them.",
-						details,
-						address
-					)
-					else string.format("Connected to session '%s' at %s.", details, address),
+				text = string.format("Connected to session '%s' at %s.", details, address),
 			})
 
 			if stageChanges and not serveSession:isLoaderInstalled() then
