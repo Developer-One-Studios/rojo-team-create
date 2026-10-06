@@ -5,7 +5,6 @@ local SerializationService = game:GetService("SerializationService")
 local Selection = game:GetService("Selection")
 local HttpService = game:GetService("HttpService")
 local ScriptEditorService = game:GetService("ScriptEditorService")
-local ServerScriptService = game:GetService("ServerScriptService")
 
 local Packages = script.Parent.Parent.Packages
 local Log = require(Packages.Log)
@@ -33,9 +32,6 @@ local STAGED_REFRESH_DELAY = 0.25
 -- How long a staged playtest waits for script sources to be written before
 -- starting anyway.
 local SOURCE_WRITE_TIMEOUT = 5
-
--- The most a session waits before restoring a deleted runtime loader.
-local LOADER_RESTORE_JITTER = 2
 
 local Status = strict("Session.Status", {
 	NotStarted = "NotStarted",
@@ -240,18 +236,6 @@ function ServeSession.new(options)
 		end
 	end)
 	table.insert(connections, connection)
-
-	if stageChanges then
-		-- A collaborator adding or removing the runtime loader changes how
-		-- staged changes are computed and tested.
-		local function onServerScriptServiceChildChanged(child)
-			if RuntimeLoader.isLoaderName(child.Name) then
-				self:__scheduleStagedRefresh()
-			end
-		end
-		table.insert(connections, ServerScriptService.ChildAdded:Connect(onServerScriptServiceChildChanged))
-		table.insert(connections, ServerScriptService.ChildRemoved:Connect(onServerScriptServiceChildChanged))
-	end
 
 	self = {
 		__status = Status.NotStarted,
@@ -689,92 +673,45 @@ end
 	without changing anything. Returns the staged patch along with the
 	InstanceMap and Reconciler that the patch refers to.
 ]]
---[[
-	Puts the runtime loader back if it was deleted while scripts still depend on
-	it, since none of those scripts would start anywhere without it. Waits a
-	random moment first so that collaborators who are all connected don't each
-	add a copy.
-]]
-function ServeSession:__repairLoader()
-	RuntimeLoader.removeDuplicateLoaders()
-
-	if RuntimeLoader.hasLegacyLoader() then
-		-- A loader from an earlier build looks for the overlay under its old
-		-- name, so it would leave staged changes out of playtests.
-		RuntimeLoader.writeLoader()
-		Log.info("Upgraded this place's runtime loader to ROJO_TEAM_CREATE_LOADER.")
-		return
-	end
-
-	if not RuntimeLoader.isMissing() then
-		return
-	end
-
-	task.wait(math.random() * LOADER_RESTORE_JITTER)
-	if self.__status == Status.Disconnected or not RuntimeLoader.isMissing() then
-		return
-	end
-
-	RuntimeLoader.writeLoader()
-	Log.warn(
-		"The runtime loader was deleted, so Rojo put it back. To stop using it,"
-			.. " run 'Rojo: Remove Runtime Loader', which also turns its scripts back on."
-	)
-
-	if self.__loaderRestoredCallback ~= nil then
-		task.spawn(self.__loaderRestoredCallback)
-	end
-end
-
-function ServeSession:onLoaderRestored(callback)
-	self.__loaderRestoredCallback = callback
-end
-
 function ServeSession:__computeStaged()
 	local rootId = self.__rootInstanceId
 
-	return Promise.try(function()
-		self:__repairLoader()
+	return self.__apiContext:read({ rootId }):andThen(function(readResponseBody)
+		local instanceMap = InstanceMap.new(self.__onInstanceChanged)
+		local reconciler = Reconciler.new(instanceMap)
+
+		reconciler:hydrate(readResponseBody.instances, rootId, game)
+
+		-- With the runtime loader, deployed scripts are turned off and tagged
+		-- instead, so that's the form the place should be compared against.
+		local loaderInstalled = RuntimeLoader.isInstalled()
+		if loaderInstalled then
+			RuntimeLoader.transformVirtualInstances(readResponseBody.instances, instanceMap)
+		end
+
+		local success, patch = reconciler:diff(readResponseBody.instances, rootId, game)
+		if not success then
+			instanceMap:stop()
+			return Promise.reject("Could not compute staged changes: " .. tostring(patch))
+		end
+
+		local modelRejection = rejectIfModelProject(patch, instanceMap)
+		if modelRejection then
+			instanceMap:stop()
+			return modelRejection
+		end
+
+		removeDataModelRename(patch, instanceMap)
+		RuntimeLoader.removePluginOwnedFromPatch(patch)
+
+		return {
+			patch = patch,
+			instanceMap = instanceMap,
+			reconciler = reconciler,
+			messageCursor = readResponseBody.messageCursor,
+			loaderInstalled = loaderInstalled,
+		}
 	end)
-		:andThen(function()
-			return self.__apiContext:read({ rootId })
-		end)
-		:andThen(function(readResponseBody)
-			local instanceMap = InstanceMap.new(self.__onInstanceChanged)
-			local reconciler = Reconciler.new(instanceMap)
-
-			reconciler:hydrate(readResponseBody.instances, rootId, game)
-
-			-- With the runtime loader, deployed scripts are turned off and tagged
-			-- instead, so that's the form the place should be compared against.
-			local loaderInstalled = RuntimeLoader.isInstalled()
-			if loaderInstalled then
-				RuntimeLoader.transformVirtualInstances(readResponseBody.instances, instanceMap)
-			end
-
-			local success, patch = reconciler:diff(readResponseBody.instances, rootId, game)
-			if not success then
-				instanceMap:stop()
-				return Promise.reject("Could not compute staged changes: " .. tostring(patch))
-			end
-
-			local modelRejection = rejectIfModelProject(patch, instanceMap)
-			if modelRejection then
-				instanceMap:stop()
-				return modelRejection
-			end
-
-			removeDataModelRename(patch, instanceMap)
-			RuntimeLoader.removePluginOwnedFromPatch(patch)
-
-			return {
-				patch = patch,
-				instanceMap = instanceMap,
-				reconciler = reconciler,
-				messageCursor = readResponseBody.messageCursor,
-				loaderInstalled = loaderInstalled,
-			}
-		end)
 end
 
 function ServeSession:__adoptStaged(staged)

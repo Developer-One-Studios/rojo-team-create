@@ -272,6 +272,8 @@ local function StagedChanges(props)
 
 	return e("Frame", {
 		Size = UDim2.new(1, 0, 0, 34),
+		-- Narrow panels can't fit every button on one line.
+		AutomaticSize = Enum.AutomaticSize.Y,
 		LayoutOrder = props.layoutOrder,
 		BackgroundTransparency = 1,
 		ZIndex = 2,
@@ -281,6 +283,24 @@ local function StagedChanges(props)
 			FillDirection = Enum.FillDirection.Horizontal,
 			SortOrder = Enum.SortOrder.LayoutOrder,
 			Padding = UDim.new(0, 10),
+			Wraps = true,
+		}),
+
+		SetUp = e(TextButton, {
+			text = "Set up",
+			style = "Bordered",
+			enabled = not busy,
+			transparency = props.transparency,
+			layoutOrder = 2,
+			onClick = function()
+				if not busy then
+					props.onSetUp()
+				end
+			end,
+		}, {
+			Tip = e(Tooltip.Trigger, {
+				text = "Add the runtime loader to this place, so your staged changes never leave your machine",
+			}),
 		}),
 
 		-- With the runtime loader, Studio's own Play button already includes
@@ -309,7 +329,7 @@ local function StagedChanges(props)
 			style = "Solid",
 			enabled = canDeploy,
 			transparency = props.transparency,
-			layoutOrder = 2,
+			layoutOrder = 3,
 			onClick = function()
 				if canDeploy then
 					props.onDeploy()
@@ -534,6 +554,7 @@ function ConnectedPage:render()
 					layoutOrder = 3,
 
 					onPlay = self.props.onPlay,
+					onSetUp = self.props.onSetUp,
 					onDeploy = self.props.onDeploy,
 				})
 				else nil,

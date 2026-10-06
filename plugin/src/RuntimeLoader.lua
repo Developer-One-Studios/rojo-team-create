@@ -51,13 +51,9 @@ local LEGACY_OVERLAY_NAMES = {
 -- This runs as a normal game script, so it can only use APIs available at
 -- runtime. It must not yield, so that it finishes before any player joins.
 local LOADER_SOURCE = [[
--- ROJO_TEAM_CREATE_LOADER v2
--- Added by the Rojo Team Create plugin. Don't edit or delete this script: the
--- game's Rojo-managed scripts are saved turned off, and this turns them on.
---
--- In a playtest started by someone syncing with Rojo Team Create, it first
--- swaps in their staged changes from ServerStorage.ROJO_TEAM_CREATE_LOCAL, which
--- only exists on their machine. Everywhere else, it starts the deployed scripts.
+--[=[
+	⛔⛔⛔ DO NOT DELETE OR EDIT THIS SCRIPT ⛔⛔⛔
+]=]
 
 local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
@@ -188,55 +184,8 @@ function RuntimeLoader.findLoader(): Script?
 	return findLoaders()[1]
 end
 
---[[
-	Whether the loader was set up by an earlier build that used different
-	instance names, and so needs upgrading.
-]]
-function RuntimeLoader.hasLegacyLoader(): boolean
-	local loader = RuntimeLoader.findLoader()
-	return loader ~= nil and loader.Name ~= LOADER_NAME
-end
-
 function RuntimeLoader.isInstalled(): boolean
 	return RuntimeLoader.findLoader() ~= nil
-end
-
---[[
-	Whether the place has scripts waiting for the loader but no loader to turn
-	them on. Those scripts won't run anywhere until the loader is back.
-]]
-function RuntimeLoader.isMissing(): boolean
-	if RuntimeLoader.isInstalled() then
-		return false
-	end
-
-	for _, object in CollectionService:GetTagged(ENABLE_TAG) do
-		if object:IsA("BaseScript") then
-			return true
-		end
-	end
-
-	return false
-end
-
---[[
-	Removes extra copies of the loader, for example from two collaborators
-	restoring it at the same time. Returns how many were removed.
-]]
-function RuntimeLoader.removeDuplicateLoaders(): number
-	local loaders = findLoaders()
-
-	if #loaders <= 1 then
-		return 0
-	end
-
-	withRecording("Rojo: Remove duplicate runtime loaders", function()
-		for index = 2, #loaders do
-			loaders[index]:Destroy()
-		end
-	end)
-
-	return #loaders - 1
 end
 
 --[[

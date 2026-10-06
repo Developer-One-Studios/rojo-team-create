@@ -32,11 +32,11 @@ Click the staged count in the panel to see what would change. Staging can be tur
 
 ## Runtime loader
 
-Each place can opt in to the runtime loader, either from the prompt when you connect or with the *Rojo: Set Up Runtime Loader* action. Your staged changes then never leave your machine, and Studio's own Play button tests them.
+Each place can opt in to the runtime loader with the **Set up** button in the Rojo panel. Your staged changes then never leave your machine, and Studio's own Play button tests them.
 
 - Rojo-managed scripts are deployed turned off, and a small `ROJO_TEAM_CREATE_LOADER` script in ServerScriptService turns them on when a server starts.
 - Your staged changes are kept in a Camera in ServerStorage, which Team Create doesn't replicate. The loader swaps them in, so they're only in playtests you start yourself.
-- The place needs the loader to start its scripts. If it's deleted, any connected Rojo Team Create session puts it back, and the plugin warns you if nobody is connected. To stop using it, run *Rojo: Remove Runtime Loader*, which also turns the scripts back on.
+- The place needs the loader to start its scripts. If it's deleted, press **Set up** again to add it back. To stop using it, run *Rojo: Remove Runtime Loader*, which also turns the scripts back on.
 
 ## Things to know
 
