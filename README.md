@@ -35,7 +35,7 @@ Outside of Team Create, the plugin syncs exactly like Rojo.
 1. Download `RojoTeamCreate.rbxm` from the [latest release](https://github.com/Developer-One-Studios/rojo-team-create/releases/latest).
 2. In Studio, open **Plugins > Plugins Folder** and put `RojoTeamCreate.rbxm` in it. Restart Studio if the plugin doesn't appear.
 3. Uninstall or disable the regular Rojo plugin. If both are installed, both will try to sync the same project.
-4. Install the Rojo server, version 7.7 or newer. You can use [Rokit](https://github.com/rojo-rbx/rokit) (`rokit add rojo-rbx/rojo`) or download `rojo` from the same release.
+4. Install the regular Rojo server, version 7.7 or newer, with [Rokit](https://github.com/rojo-rbx/rokit) (`rokit add rojo-rbx/rojo`) or from the [Rojo releases](https://github.com/rojo-rbx/rojo/releases).
 5. Run `rojo serve` in your project and press **Connect** in the Rojo Team Create panel.
 
 ## Settings
