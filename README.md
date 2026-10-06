@@ -36,7 +36,7 @@ Each place can opt in to the runtime loader, either from the prompt when you con
 
 - Rojo-managed scripts are deployed turned off, and a small `RojoTeamCreateLoader` script in ServerScriptService turns them on when a server starts.
 - Your staged changes are kept in a Camera in ServerStorage, which Team Create doesn't replicate. The loader swaps them in, so they're only in playtests you start yourself.
-- The place needs the loader to start its scripts, so don't delete it. *Rojo: Remove Runtime Loader* removes it and turns the scripts back on.
+- The place needs the loader to start its scripts. If it's deleted, any connected Rojo Team Create session puts it back, and the plugin warns you if nobody is connected. To stop using it, run *Rojo: Remove Runtime Loader*, which also turns the scripts back on.
 
 ## Things to know
 

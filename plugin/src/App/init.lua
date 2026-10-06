@@ -1,6 +1,7 @@
 local ChangeHistoryService = game:GetService("ChangeHistoryService")
 local Players = game:GetService("Players")
 local ServerStorage = game:GetService("ServerStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
 local RunService = game:GetService("RunService")
 local StudioTestService = game:GetService("StudioTestService")
 
@@ -27,6 +28,7 @@ local soundPlayer = require(Plugin.soundPlayer)
 local ignorePlaceIds = require(Plugin.ignorePlaceIds)
 local isTeamCreate = require(Plugin.isTeamCreate)
 local StagedPlaytest = require(Plugin.StagedPlaytest)
+local RuntimeLoader = require(Plugin.RuntimeLoader)
 local timeUtil = require(Plugin.timeUtil)
 local Theme = require(script.Theme)
 
@@ -150,6 +152,16 @@ function App:init()
 	if RunService:IsEdit() then
 		self:checkForUpdates()
 
+		-- Give Team Create a moment to load the place before checking it.
+		task.delay(5, function()
+			self:warnIfLoaderMissing()
+		end)
+		self.loaderRemovedConnection = ServerScriptService.ChildRemoved:Connect(function(child)
+			if child.Name == RuntimeLoader.LOADER_NAME then
+				self:warnIfLoaderMissing()
+			end
+		end)
+
 		local success, editModeSignal = pcall(function()
 			return StudioTestService:GetPropertyChangedSignal("EditModeActive")
 		end)
@@ -204,6 +216,9 @@ function App:willUnmount()
 	self.waypointConnection:Disconnect()
 	if self.editModeConnection then
 		self.editModeConnection:Disconnect()
+	end
+	if self.loaderRemovedConnection then
+		self.loaderRemovedConnection:Disconnect()
 	end
 	self.confirmationBindable:Destroy()
 
@@ -688,6 +703,13 @@ function App:startSession()
 		})
 	end)
 
+	serveSession:onLoaderRestored(function()
+		self:addNotification({
+			text = "The runtime loader was deleted, so Rojo put it back. Without it, this place's Rojo scripts wouldn't start.",
+			timeout = 10,
+		})
+	end)
+
 	serveSession:onStagedChanged(function(stagedPatch, instanceMap)
 		if self.serveSession ~= serveSession then
 			return
@@ -1094,11 +1116,39 @@ function App:setUpRuntimeLoader()
 		end)
 end
 
+--[[
+	Warns when this place's scripts are waiting for a runtime loader that isn't
+	there. A connected session puts the loader back by itself.
+]]
+function App:warnIfLoaderMissing()
+	if self:getStagingSession() ~= nil or not RuntimeLoader.isMissing() then
+		return
+	end
+
+	local message = "This place's runtime loader is missing, so its Rojo scripts won't start."
+		.. " Connect Rojo Team Create to put it back, or run 'Rojo: Remove Runtime Loader' to turn the scripts back on."
+	Log.warn(message)
+	self:addNotification({
+		text = message,
+		timeout = 30,
+	})
+end
+
 function App:removeRuntimeLoader()
+	if self.state.stagedBusy then
+		return
+	end
+
 	local serveSession = self:getStagingSession()
-	if serveSession == nil or self.state.stagedBusy then
+	if serveSession == nil then
+		-- Removing the loader doesn't need a project, so it also works for
+		-- fixing a place whose loader went missing.
+		local success, err = pcall(RuntimeLoader.uninstall)
 		self:addNotification({
-			text = "Connect to Rojo in a Team Create place to remove the runtime loader.",
+			text = if success
+				then "Removed the runtime loader and turned the scripts it was starting back on."
+				else "Could not remove the runtime loader: " .. tostring(err),
+			timeout = 10,
 		})
 		return
 	end

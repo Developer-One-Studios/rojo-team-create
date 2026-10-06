@@ -128,6 +128,17 @@ if #Players:GetPlayers() > 0 then
 end
 ]]
 
+local function withRecording(name: string, callback)
+	local recording = ChangeHistoryService:TryBeginRecording(name)
+	local success, err = pcall(callback)
+	if recording then
+		ChangeHistoryService:FinishRecording(recording, Enum.FinishRecordingOperation.Commit)
+	end
+	if not success then
+		error(err, 0)
+	end
+end
+
 local SCRIPT_CLASSES = {
 	Script = true,
 	LocalScript = true,
@@ -153,6 +164,49 @@ function RuntimeLoader.isInstalled(): boolean
 end
 
 --[[
+	Whether the place has scripts waiting for the loader but no loader to turn
+	them on. Those scripts won't run anywhere until the loader is back.
+]]
+function RuntimeLoader.isMissing(): boolean
+	if RuntimeLoader.isInstalled() then
+		return false
+	end
+
+	for _, object in CollectionService:GetTagged(ENABLE_TAG) do
+		if object:IsA("BaseScript") then
+			return true
+		end
+	end
+
+	return false
+end
+
+--[[
+	Removes extra copies of the loader, for example from two collaborators
+	restoring it at the same time. Returns how many were removed.
+]]
+function RuntimeLoader.removeDuplicateLoaders(): number
+	local loaders = {}
+	for _, child in ServerScriptService:GetChildren() do
+		if child.Name == LOADER_NAME and child:IsA("Script") then
+			table.insert(loaders, child)
+		end
+	end
+
+	if #loaders <= 1 then
+		return 0
+	end
+
+	withRecording("Rojo: Remove duplicate runtime loaders", function()
+		for index = 2, #loaders do
+			loaders[index]:Destroy()
+		end
+	end)
+
+	return #loaders - 1
+end
+
+--[[
 	Whether an instance belongs to the runtime loader rather than to a Rojo
 	project, so that syncing never deletes it as an unknown instance.
 ]]
@@ -171,17 +225,6 @@ function RuntimeLoader.removePluginOwnedFromPatch(patch)
 		if typeof(removed) == "Instance" and RuntimeLoader.isPluginOwned(removed) then
 			table.remove(patch.removed, index)
 		end
-	end
-end
-
-local function withRecording(name: string, callback)
-	local recording = ChangeHistoryService:TryBeginRecording(name)
-	local success, err = pcall(callback)
-	if recording then
-		ChangeHistoryService:FinishRecording(recording, Enum.FinishRecordingOperation.Commit)
-	end
-	if not success then
-		error(err, 0)
 	end
 end
 
