@@ -967,7 +967,7 @@ function App:deployStagedChanges()
 		:andThen(function(patch, unappliedPatch)
 			if PatchSet.isEmpty(patch) then
 				self:addNotification({
-					text = "There are no staged changes to deploy.",
+					text = "Nothing to deploy.",
 				})
 				return
 			end
@@ -1035,8 +1035,7 @@ function App:offerRuntimeLoader(projectName: string)
 	self.offeredRuntimeLoader[projectName] = true
 
 	self:addNotification({
-		text = "Set up the runtime loader for this place? Your staged changes would then never leave your machine,"
-			.. " and Studio's Play button would test them.",
+		text = "Set up the loader script? Your staged changes would then never leave your machine.",
 		timeout = 30,
 		actions = {
 			SetUp = {
@@ -1078,14 +1077,9 @@ function App:setUpRuntimeLoader()
 
 	serveSession
 		:setUpRuntimeLoader()
-		:andThen(function(switchedCount)
+		:andThen(function()
 			self:addNotification({
-				text = string.format(
-					"Set up the runtime loader and switched %d deployed scripts over to it."
-						.. " Studio's Play button now tests your staged changes.",
-					switchedCount
-				),
-				timeout = 10,
+				text = "Loader script added.",
 			})
 		end)
 		:catch(function(err)
@@ -1114,7 +1108,7 @@ function App:removeRuntimeLoader()
 		local success, err = pcall(RuntimeLoader.uninstall)
 		self:addNotification({
 			text = if success
-				then "Removed the runtime loader and turned the scripts it was starting back on."
+				then "Loader script removed."
 				else "Could not remove the runtime loader: " .. tostring(err),
 			timeout = 10,
 		})
@@ -1129,7 +1123,7 @@ function App:removeRuntimeLoader()
 		:removeRuntimeLoader()
 		:andThen(function()
 			self:addNotification({
-				text = "Removed the runtime loader and turned the scripts it was starting back on.",
+				text = "Loader script removed.",
 				timeout = 10,
 			})
 		end)

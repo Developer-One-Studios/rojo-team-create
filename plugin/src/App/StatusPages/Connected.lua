@@ -331,7 +331,8 @@ local function StagedChanges(props)
 			transparency = props.transparency,
 			layoutOrder = 3,
 			onClick = function()
-				if canDeploy then
+				-- Still clickable with nothing staged, so it can say so.
+				if not busy then
 					props.onDeploy()
 				end
 			end,
