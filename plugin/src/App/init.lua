@@ -143,7 +143,9 @@ function App:init()
 		stagedPatch = PatchSet.newEmpty(),
 		stagedPatchTree = nil,
 		stagedTimestamp = os.time(),
+		loaderInstalled = false,
 	})
+	self.offeredRuntimeLoader = {}
 
 	if RunService:IsEdit() then
 		self:checkForUpdates()
@@ -695,6 +697,7 @@ function App:startSession()
 			stagedPatch = stagedPatch,
 			stagedPatchTree = PatchTree.build(stagedPatch, instanceMap, { "Property", "Current", "Staged" }),
 			stagedTimestamp = DateTime.now().UnixTimestamp,
+			loaderInstalled = serveSession:isLoaderInstalled(),
 		})
 	end)
 
@@ -771,6 +774,10 @@ function App:startSession()
 					)
 					else string.format("Connected to session '%s' at %s.", details, address),
 			})
+
+			if stageChanges and not serveSession:isLoaderInstalled() then
+				self:offerRuntimeLoader(details)
+			end
 		elseif status == ServeSession.Status.Disconnected then
 			self.serveSession = nil
 			if not stageChanges then
@@ -787,6 +794,7 @@ function App:startSession()
 				stagedBusy = false,
 				stagedPatch = PatchSet.newEmpty(),
 				stagedPatchTree = Roact.None,
+				loaderInstalled = false,
 			})
 
 			-- Details being present indicates that this
@@ -1018,13 +1026,118 @@ function App:startStagedPlaytest(mode)
 		end)
 end
 
+function App:offerRuntimeLoader(projectName: string)
+	-- Only ask once per project each session.
+	if self.offeredRuntimeLoader[projectName] then
+		return
+	end
+	self.offeredRuntimeLoader[projectName] = true
+
+	self:addNotification({
+		text = "Set up the runtime loader for this place? Your staged changes would then never leave your machine,"
+			.. " and Studio's Play button would test them.",
+		timeout = 30,
+		actions = {
+			SetUp = {
+				text = "Set up",
+				style = "Solid",
+				layoutOrder = 1,
+				onClick = function()
+					self:setUpRuntimeLoader()
+				end,
+			},
+			NotNow = {
+				text = "Not now",
+				style = "Bordered",
+				layoutOrder = 2,
+			},
+		},
+	})
+end
+
+function App:setUpRuntimeLoader()
+	local serveSession = self:getStagingSession()
+	if serveSession == nil or self.state.stagedBusy then
+		self:addNotification({
+			text = "Connect to Rojo in a Team Create place to set up the runtime loader.",
+		})
+		return
+	end
+
+	self:setState({
+		stagedBusy = true,
+	})
+
+	serveSession
+		:setUpRuntimeLoader()
+		:andThen(function(switchedCount)
+			self:addNotification({
+				text = string.format(
+					"Set up the runtime loader and switched %d deployed scripts over to it."
+						.. " Studio's Play button now tests your staged changes.",
+					switchedCount
+				),
+				timeout = 10,
+			})
+		end)
+		:catch(function(err)
+			Log.warn("Could not set up the runtime loader: {}", err)
+			self:addNotification({
+				text = "Could not set up the runtime loader: " .. tostring(err),
+				timeout = 10,
+			})
+		end)
+		:finally(function()
+			self:setState({
+				stagedBusy = false,
+			})
+		end)
+end
+
+function App:removeRuntimeLoader()
+	local serveSession = self:getStagingSession()
+	if serveSession == nil or self.state.stagedBusy then
+		self:addNotification({
+			text = "Connect to Rojo in a Team Create place to remove the runtime loader.",
+		})
+		return
+	end
+
+	self:setState({
+		stagedBusy = true,
+	})
+
+	serveSession
+		:removeRuntimeLoader()
+		:andThen(function()
+			self:addNotification({
+				text = "Removed the runtime loader and turned the scripts it was starting back on.",
+				timeout = 10,
+			})
+		end)
+		:catch(function(err)
+			Log.warn("Could not remove the runtime loader: {}", err)
+			self:addNotification({
+				text = "Could not remove the runtime loader: " .. tostring(err),
+				timeout = 10,
+			})
+		end)
+		:finally(function()
+			self:setState({
+				stagedBusy = false,
+			})
+		end)
+end
+
 function App:onPlaytestStarted()
 	if self.startingStagedPlaytest then
 		return
 	end
 
 	local serveSession = self:getStagingSession()
-	if serveSession == nil then
+	if serveSession == nil or serveSession:isLoaderInstalled() then
+		-- With the runtime loader, every playtest already includes the
+		-- staged changes.
 		return
 	end
 
@@ -1138,6 +1251,7 @@ function App:render()
 						stagedPatch = self.state.stagedPatch,
 						stagedPatchTree = self.state.stagedPatchTree,
 						stagedTimestamp = self.state.stagedTimestamp,
+						loaderInstalled = self.state.loaderInstalled,
 
 						onDeploy = function()
 							self:deployStagedChanges()
@@ -1270,6 +1384,28 @@ function App:render()
 				bindable = true,
 				onTriggered = function()
 					self:startStagedPlaytest(StagedPlaytest.Mode.Run)
+				end,
+			}),
+
+			setUpLoaderAction = e(StudioPluginAction, {
+				name = "RojoSetUpRuntimeLoader",
+				title = "Rojo: Set Up Runtime Loader",
+				description = "Adds the runtime loader to this place so staged changes never leave your machine",
+				icon = Assets.Images.PluginButton,
+				bindable = true,
+				onTriggered = function()
+					self:setUpRuntimeLoader()
+				end,
+			}),
+
+			removeLoaderAction = e(StudioPluginAction, {
+				name = "RojoRemoveRuntimeLoader",
+				title = "Rojo: Remove Runtime Loader",
+				description = "Removes the runtime loader from this place and turns its scripts back on",
+				icon = Assets.Images.PluginButton,
+				bindable = true,
+				onTriggered = function()
+					self:removeRuntimeLoader()
 				end,
 			}),
 

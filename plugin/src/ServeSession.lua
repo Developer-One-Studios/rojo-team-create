@@ -5,6 +5,7 @@ local SerializationService = game:GetService("SerializationService")
 local Selection = game:GetService("Selection")
 local HttpService = game:GetService("HttpService")
 local ScriptEditorService = game:GetService("ScriptEditorService")
+local ServerScriptService = game:GetService("ServerScriptService")
 
 local Packages = script.Parent.Parent.Packages
 local Log = require(Packages.Log)
@@ -21,6 +22,7 @@ local Reconciler = require(script.Parent.Reconciler)
 local strict = require(script.Parent.strict)
 local Settings = require(script.Parent.Settings)
 local StagedPlaytest = require(script.Parent.StagedPlaytest)
+local RuntimeLoader = require(script.Parent.RuntimeLoader)
 local orderSwaps = require(script.Parent.orderSwaps)
 local decodeValue = require(script.Parent.Reconciler.decodeValue)
 
@@ -236,6 +238,18 @@ function ServeSession.new(options)
 	end)
 	table.insert(connections, connection)
 
+	if stageChanges then
+		-- A collaborator adding or removing the runtime loader changes how
+		-- staged changes are computed and tested.
+		local function onServerScriptServiceChildChanged(child)
+			if child.Name == RuntimeLoader.LOADER_NAME then
+				self:__scheduleStagedRefresh()
+			end
+		end
+		table.insert(connections, ServerScriptService.ChildAdded:Connect(onServerScriptServiceChildChanged))
+		table.insert(connections, ServerScriptService.ChildRemoved:Connect(onServerScriptServiceChildChanged))
+	end
+
 	self = {
 		__status = Status.NotStarted,
 		__apiContext = options.apiContext,
@@ -254,6 +268,8 @@ function ServeSession.new(options)
 		__stagedRefreshScheduled = false,
 		__stagedRefreshSequence = 0,
 		__stagedBusy = false,
+		__loaderInstalled = false,
+		__lastOverlaySkipped = nil,
 		__connections = connections,
 		__precommitCallbacks = {},
 		__postcommitCallbacks = {},
@@ -678,6 +694,14 @@ function ServeSession:__computeStaged()
 		local reconciler = Reconciler.new(instanceMap)
 
 		reconciler:hydrate(readResponseBody.instances, rootId, game)
+
+		-- With the runtime loader, deployed scripts are turned off and tagged
+		-- instead, so that's the form the place should be compared against.
+		local loaderInstalled = RuntimeLoader.isInstalled()
+		if loaderInstalled then
+			RuntimeLoader.transformVirtualInstances(readResponseBody.instances, instanceMap)
+		end
+
 		local success, patch = reconciler:diff(readResponseBody.instances, rootId, game)
 		if not success then
 			instanceMap:stop()
@@ -691,12 +715,14 @@ function ServeSession:__computeStaged()
 		end
 
 		removeDataModelRename(patch, instanceMap)
+		RuntimeLoader.removePluginOwnedFromPatch(patch)
 
 		return {
 			patch = patch,
 			instanceMap = instanceMap,
 			reconciler = reconciler,
 			messageCursor = readResponseBody.messageCursor,
+			loaderInstalled = loaderInstalled,
 		}
 	end)
 end
@@ -714,11 +740,43 @@ function ServeSession:__adoptStaged(staged)
 		oldInstanceMap:stop()
 	end
 
+	self.__loaderInstalled = staged.loaderInstalled == true
+	self:__updateOverlay(staged.patch, staged.instanceMap)
+
 	Log.trace("Staged changes: {:#?}", debugPatch(staged.patch))
 
 	if self.__stagedChangedCallback ~= nil then
 		task.spawn(self.__stagedChangedCallback, staged.patch, staged.instanceMap)
 	end
+end
+
+--[[
+	Keeps the runtime loader's overlay matching the staged changes, so that
+	any playtest, including ones started with Studio's own Play button,
+	includes them.
+]]
+function ServeSession:__updateOverlay(patch, instanceMap)
+	if not self.__loaderInstalled then
+		RuntimeLoader.clearOverlay()
+		return
+	end
+
+	local success, skippedOrError = pcall(RuntimeLoader.writeOverlay, patch, instanceMap)
+	if not success then
+		Log.warn("Could not prepare staged changes for playtests: {}", skippedOrError)
+	elseif skippedOrError ~= self.__lastOverlaySkipped and skippedOrError > 0 then
+		Log.warn(
+			"{} staged changes can't be included in playtests until they're deployed,"
+				.. " because they change services or other instances that can't be copied.",
+			skippedOrError
+		)
+	end
+
+	self.__lastOverlaySkipped = if success then skippedOrError else nil
+end
+
+function ServeSession:isLoaderInstalled(): boolean
+	return self.__loaderInstalled == true
 end
 
 --[[
@@ -769,9 +827,10 @@ end
 	Runs `callback` with freshly computed staged changes while preventing
 	background refreshes from replacing the InstanceMap underneath it. Staged
 	changes are recomputed again afterwards, since the callback may have
-	changed the DataModel.
+	changed the DataModel. `prepare` runs before the staged changes are
+	computed.
 ]]
-function ServeSession:__withFreshStaged(callback)
+function ServeSession:__withFreshStaged(callback, prepare: (() -> ())?)
 	if not self.__stageChanges then
 		return Promise.reject("This session is not staging changes")
 	end
@@ -784,7 +843,14 @@ function ServeSession:__withFreshStaged(callback)
 
 	self.__stagedBusy = true
 
-	return self:__computeStaged()
+	return Promise.try(function()
+		if prepare ~= nil then
+			prepare()
+		end
+	end)
+		:andThen(function()
+			return self:__computeStaged()
+		end)
 		:andThen(function(staged)
 			self:__adoptStaged(staged)
 			return callback(staged.patch)
@@ -807,12 +873,47 @@ end
 ]]
 function ServeSession:deployStaged()
 	return self:__withFreshStaged(function(patch)
+		if self.__loaderInstalled then
+			-- A newer plugin may have changed how the loader works.
+			RuntimeLoader.writeLoader()
+		end
+
 		if PatchSet.isEmpty(patch) then
 			return patch, PatchSet.newEmpty()
 		end
 
 		local unappliedPatch = self:__applyPatch(patch)
 		return patch, unappliedPatch
+	end)
+end
+
+--[[
+	Adds the runtime loader to the place and switches the deployed scripts over
+	to it, without deploying any other staged changes. Resolves with how many
+	scripts were switched over.
+]]
+function ServeSession:setUpRuntimeLoader()
+	return self:__withFreshStaged(function(patch)
+		-- The loader exists by now, so the staged patch includes turning each
+		-- deployed script off and tagging it. Only that part is deployed.
+		local conversion = RuntimeLoader.getScriptConversion(patch)
+		if not PatchSet.isEmpty(conversion) then
+			self:__applyPatch(conversion)
+		end
+
+		return PatchSet.countInstances(conversion)
+	end, function()
+		RuntimeLoader.writeLoader()
+	end)
+end
+
+--[[
+	Removes the runtime loader from the place and turns the scripts it was
+	starting back on.
+]]
+function ServeSession:removeRuntimeLoader()
+	return self:__withFreshStaged(function()
+		RuntimeLoader.uninstall()
 	end)
 end
 
@@ -834,9 +935,11 @@ function ServeSession:startStagedPlaytest(mode)
 		local token = HttpService:GenerateGUID(false)
 		local args = StagedPlaytest.createArgs(token, self.__apiContext.__baseUrl)
 
-		if PatchSet.isEmpty(patch) then
+		-- The runtime loader puts the staged changes into every playtest by
+		-- itself, so there's nothing to apply.
+		if self.__loaderInstalled or PatchSet.isEmpty(patch) then
 			StagedPlaytest.launch(mode, args)
-			return patch, "empty"
+			return patch, if self.__loaderInstalled then "loader" else "empty"
 		end
 
 		local recording = ChangeHistoryService:TryBeginRecording("Rojo: Staged playtest")
@@ -1018,6 +1121,11 @@ function ServeSession:__stopInternal(err)
 		connection:Disconnect()
 	end
 	self.__connections = {}
+
+	if self.__stageChanges then
+		-- Without a session, playtests should use the deployed code.
+		RuntimeLoader.clearOverlay()
+	end
 end
 
 function ServeSession:__setStatus(status, detail)

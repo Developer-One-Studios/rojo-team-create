@@ -30,9 +30,17 @@ Click the staged count in the panel to see what would change. Staging can be tur
 2. Remove or disable the regular Rojo plugin in your own Studio.
 3. Use the regular Rojo server, version 7.7 or newer (`rokit add rojo-rbx/rojo`), and run `rojo serve`.
 
+## Runtime loader
+
+Each place can opt in to the runtime loader, either from the prompt when you connect or with the *Rojo: Set Up Runtime Loader* action. Your staged changes then never leave your machine, and Studio's own Play button tests them.
+
+- Rojo-managed scripts are deployed turned off, and a small `RojoTeamCreateLoader` script in ServerScriptService turns them on when a server starts.
+- Your staged changes are kept in a Camera in ServerStorage, which Team Create doesn't replicate. The loader swaps them in, so they're only in playtests you start yourself.
+- The place needs the loader to start its scripts, so don't delete it. *Rojo: Remove Runtime Loader* removes it and turns the scripts back on.
+
 ## Things to know
 
-- **Rojo's Play briefly shares your changes.** Studio starts game scripts before plugins load, so the plugin writes your staged changes into the place while the playtest starts (about 4–5 seconds), then reverts them.
+- **Without the runtime loader, Rojo's Play briefly shares your changes.** Studio starts game scripts before plugins load, so the plugin writes your staged changes into the place while the playtest starts (about 4–5 seconds), then reverts them.
 - **While staging, two-way sync is off and the sync lock isn't used**, so several people can be connected at once.
 
 ## Working with people on the regular Rojo plugin

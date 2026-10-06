@@ -283,22 +283,26 @@ local function StagedChanges(props)
 			Padding = UDim.new(0, 10),
 		}),
 
-		Play = e(TextButton, {
-			text = "Play",
-			style = "Bordered",
-			enabled = not busy,
-			transparency = props.transparency,
-			layoutOrder = 1,
-			onClick = function()
-				if not busy then
-					props.onPlay()
-				end
-			end,
-		}, {
-			Tip = e(Tooltip.Trigger, {
-				text = "Start a local playtest that includes your staged changes",
+		-- With the runtime loader, Studio's own Play button already includes
+		-- the staged changes.
+		Play = if props.loaderInstalled
+			then nil
+			else e(TextButton, {
+				text = "Play",
+				style = "Bordered",
+				enabled = not busy,
+				transparency = props.transparency,
+				layoutOrder = 1,
+				onClick = function()
+					if not busy then
+						props.onPlay()
+					end
+				end,
+			}, {
+				Tip = e(Tooltip.Trigger, {
+					text = "Start a local playtest that includes your staged changes",
+				}),
 			}),
-		}),
 
 		Deploy = e(TextButton, {
 			text = "Deploy",
@@ -463,7 +467,7 @@ function ConnectedPage:render()
 						text = if isStaging
 							then (if self.state.renderStagedChanges
 								then "Hide staged changes"
-								else "View staged changes. They're only in your Studio and the playtests you start from Rojo.")
+								else "View staged changes. They stay on your machine until you deploy them.")
 							elseif self.state.renderChanges then "Hide changes"
 							else "View changes",
 					}),
@@ -525,6 +529,7 @@ function ConnectedPage:render()
 				then e(StagedChanges, {
 					stagedPatch = self.props.stagedPatch,
 					busy = self.props.stagedBusy,
+					loaderInstalled = self.props.loaderInstalled,
 					transparency = self.props.transparency,
 					layoutOrder = 3,
 
