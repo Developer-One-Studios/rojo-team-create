@@ -53,6 +53,17 @@ All of Rojo's other settings are still available.
 - **The sync lock isn't used while staging.** Several collaborators can be connected at once, since nobody writes to the place until they deploy.
 - **Staged changes are recomputed from the whole project** on each change, so very large projects may take a moment to update the staged count.
 
+## Working with people on the regular Rojo plugin
+
+Rojo Team Create and the regular Rojo plugin can be used in the same Team Create place, but only Rojo Team Create users get staging.
+
+- **Regular Rojo syncs straight into the place.** Changes from someone on the regular plugin go live for everyone right away, so Rojo Team Create users see them as deployed changes.
+- **Deploys and regular syncs can overwrite each other.** A Rojo Team Create deploy replaces whatever a regular Rojo user synced to the same scripts, and a regular Rojo user who connects syncs the place back to match their files.
+- **The sync lock only applies to regular Rojo users.** Only one regular Rojo user can sync at a time. Rojo Team Create users don't take the lock, so they never block anyone and are never blocked.
+- **Regular Rojo users should keep two-way sync off.** With it on, their plugin writes any change in the place back to their files. That includes Rojo Team Create deploys and the few seconds while a staged Play is starting.
+
+If people work on separate parts of the game, mixing the two plugins is mostly fine. For everyone to be protected from each other, the whole team should use Rojo Team Create.
+
 ## Building from source
 
 Clone this repository, run `git submodule update --init --recursive`, then build the plugin straight into your Studio plugins folder:
