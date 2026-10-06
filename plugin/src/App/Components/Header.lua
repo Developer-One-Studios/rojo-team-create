@@ -85,7 +85,9 @@ local function Header(props)
 				ImageColor3 = theme.Header.LogoColor,
 				ImageTransparency = props.transparency,
 
-				Size = UDim2.new(0, 60, 0, 27),
+				-- Fills the header's height so the "Team Create" line in the
+				-- logo stays legible.
+				Size = UDim2.new(0, 71, 0, 32),
 
 				LayoutOrder = 1,
 				BackgroundTransparency = 1,

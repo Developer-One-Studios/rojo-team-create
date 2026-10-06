@@ -133,6 +133,16 @@ function SettingsPage:render()
 				end),
 			}),
 
+			StageChangesInTeamCreate = e(Setting, {
+				id = "stageChangesInTeamCreate",
+				name = "Stage Changes in Team Create",
+				description = "In Team Create, keep synced changes local until you deploy them. Use Rojo's Play button to test them.",
+				locked = self.props.syncActive,
+				lockedTooltip = "(Cannot change while currently syncing. Disconnect first.)",
+				transparency = self.props.transparency,
+				layoutOrder = layoutIncrement(),
+			}),
+
 			ConfirmationBehavior = e(Setting, {
 				id = "confirmationBehavior",
 				name = "Confirmation Behavior",

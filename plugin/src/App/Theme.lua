@@ -23,7 +23,11 @@ local Roact = require(Packages.Roact)
 
 local strict = require(script.Parent.Parent.strict)
 
-local BRAND_COLOR = Color3.fromHex("E13835")
+local BRAND_COLOR = Color3.fromHex("FDF301")
+
+-- The brand yellow is too light for white text, so anything drawn on top of
+-- it uses this instead.
+local ON_BRAND_COLOR = Color3.fromHex("1B1B1B")
 
 local Context = Roact.createContext({})
 
@@ -67,11 +71,11 @@ function StudioProvider:updateTheme()
 				ActionFillColor = Color3.fromHex("FFFFFF"),
 				ActionFillTransparency = 0.8,
 				Enabled = {
-					TextColor = Color3.fromHex("FFFFFF"),
+					TextColor = ON_BRAND_COLOR,
 					BackgroundColor = BRAND_COLOR,
 				},
 				Disabled = {
-					TextColor = Color3.fromHex("FFFFFF"),
+					TextColor = ON_BRAND_COLOR,
 					BackgroundColor = BRAND_COLOR,
 				},
 			},
@@ -103,7 +107,7 @@ function StudioProvider:updateTheme()
 		Checkbox = {
 			Active = {
 				-- Active checkboxes use brand theming, not Studio theming.
-				IconColor = Color3.fromHex("FFFFFF"),
+				IconColor = ON_BRAND_COLOR,
 				BackgroundColor = BRAND_COLOR,
 			},
 			Inactive = {

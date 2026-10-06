@@ -20,6 +20,7 @@ local defaultSettings = {
 	checkForUpdates = true,
 	checkForPrereleases = false,
 	autoConnectPlaytestServer = false,
+	stageChangesInTeamCreate = true,
 	confirmationBehavior = "Initial" :: "Never" | "Initial" | "Large Changes" | "Unlisted PlaceId",
 	largeChangesConfirmationThreshold = 5,
 	playSounds = true,

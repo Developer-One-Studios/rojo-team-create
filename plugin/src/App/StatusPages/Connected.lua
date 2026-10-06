@@ -36,6 +36,9 @@ function ChangesViewer:render()
 
 	local unapplied = PatchSet.countChanges(self.props.patchData.unapplied)
 	local applied = PatchSet.countChanges(self.props.patchData.patch) - unapplied
+	local staged = self.props.staged == true
+
+	local timestampText = DateTime.fromUnixTimestamp(self.props.patchData.timestamp):FormatLocalTime("LTS", "en-us")
 
 	return Theme.with(function(theme)
 		return Roact.createFragment({
@@ -60,7 +63,7 @@ function ChangesViewer:render()
 				}),
 
 				Title = e("TextLabel", {
-					Text = "Sync",
+					Text = if staged then "Staged" else "Sync",
 					FontFace = theme.Font.Main,
 					TextSize = theme.TextSize.Large,
 					TextXAlignment = Enum.TextXAlignment.Left,
@@ -72,7 +75,7 @@ function ChangesViewer:render()
 				}),
 
 				Subtitle = e("TextLabel", {
-					Text = DateTime.fromUnixTimestamp(self.props.patchData.timestamp):FormatLocalTime("LTS", "en-us"),
+					Text = if staged then "Updated " .. timestampText else timestampText,
 					TextXAlignment = Enum.TextXAlignment.Left,
 					FontFace = theme.Font.Thin,
 					TextSize = theme.TextSize.Medium,
@@ -92,8 +95,11 @@ function ChangesViewer:render()
 					AnchorPoint = Vector2.new(1, 0.5),
 				}, {
 					Tooltip = e(Tooltip.Trigger, {
-						text = `{applied} changes applied`
-							.. (if unapplied > 0 then `, {unapplied} changes failed` else ""),
+						text = if staged
+							then `{applied} changes staged`
+							else `{applied} changes applied` .. (if unapplied > 0
+								then `, {unapplied} changes failed`
+								else ""),
 					}),
 					Content = e("Frame", {
 						BackgroundTransparency = 1,
@@ -259,6 +265,60 @@ local function ConnectionDetails(props)
 	end)
 end
 
+local function StagedChanges(props)
+	local stagedCount = PatchSet.countInstances(props.stagedPatch)
+	local busy = props.busy == true
+	local canDeploy = stagedCount > 0 and not busy
+
+	return e("Frame", {
+		Size = UDim2.new(1, 0, 0, 34),
+		LayoutOrder = props.layoutOrder,
+		BackgroundTransparency = 1,
+		ZIndex = 2,
+	}, {
+		Layout = e("UIListLayout", {
+			HorizontalAlignment = Enum.HorizontalAlignment.Right,
+			FillDirection = Enum.FillDirection.Horizontal,
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			Padding = UDim.new(0, 10),
+		}),
+
+		Play = e(TextButton, {
+			text = "Play",
+			style = "Bordered",
+			enabled = not busy,
+			transparency = props.transparency,
+			layoutOrder = 1,
+			onClick = function()
+				if not busy then
+					props.onPlay()
+				end
+			end,
+		}, {
+			Tip = e(Tooltip.Trigger, {
+				text = "Start a local playtest that includes your staged changes",
+			}),
+		}),
+
+		Deploy = e(TextButton, {
+			text = "Deploy",
+			style = "Solid",
+			enabled = canDeploy,
+			transparency = props.transparency,
+			layoutOrder = 2,
+			onClick = function()
+				if canDeploy then
+					props.onDeploy()
+				end
+			end,
+		}, {
+			Tip = e(Tooltip.Trigger, {
+				text = "Write your staged changes to the place so they save and replicate to everyone",
+			}),
+		}),
+	})
+end
+
 local ConnectedPage = Roact.Component:extend("ConnectedPage")
 
 function ConnectedPage:getChangeInfoText()
@@ -305,6 +365,7 @@ end
 function ConnectedPage:init()
 	self:setState({
 		renderChanges = false,
+		renderStagedChanges = false,
 		hoveringChangeInfo = false,
 		showingStringDiff = false,
 		currentString = "",
@@ -334,6 +395,11 @@ function ConnectedPage:render()
 	local syncWarning = self.props.patchData
 		and self.props.patchData.unapplied
 		and PatchSet.countChanges(self.props.patchData.unapplied) > 0
+
+	local isStaging = self.props.isStaging == true
+	local stagedCount = if isStaging and self.props.stagedPatch
+		then PatchSet.countInstances(self.props.stagedPatch)
+		else 0
 
 	return Theme.with(function(theme)
 		return Roact.createFragment({
@@ -379,6 +445,11 @@ function ConnectedPage:render()
 					[Roact.Event.Activated] = function()
 						self:setState(function(prevState)
 							prevState = prevState or {}
+							if isStaging then
+								return {
+									renderStagedChanges = not prevState.renderStagedChanges,
+								}
+							end
 							return {
 								renderChanges = not prevState.renderChanges,
 							}
@@ -389,7 +460,12 @@ function ConnectedPage:render()
 						CornerRadius = UDim.new(0, 5),
 					}),
 					Tooltip = e(Tooltip.Trigger, {
-						text = if self.state.renderChanges then "Hide changes" else "View changes",
+						text = if isStaging
+							then (if self.state.renderStagedChanges
+								then "Hide staged changes"
+								else "View staged changes. They're only in your Studio and the playtests you start from Rojo.")
+							elseif self.state.renderChanges then "Hide changes"
+							else "View changes",
 					}),
 					Content = e("Frame", {
 						BackgroundTransparency = 1,
@@ -409,10 +485,13 @@ function ConnectedPage:render()
 						}),
 						Text = e("TextLabel", {
 							BackgroundTransparency = 1,
-							Text = self.changeInfoText,
+							Text = if isStaging then `{stagedCount} staged` else self.changeInfoText,
 							FontFace = theme.Font.Thin,
 							TextSize = theme.TextSize.Body,
-							TextColor3 = if syncWarning then theme.Diff.Warning else theme.Header.VersionColor,
+							TextColor3 = if syncWarning
+								then theme.Diff.Warning
+								elseif stagedCount > 0 then theme.TextColor
+								else theme.Header.VersionColor,
 							TextTransparency = self.props.transparency,
 							TextXAlignment = Enum.TextXAlignment.Right,
 							Size = UDim2.new(0, 0, 1, 0),
@@ -442,9 +521,21 @@ function ConnectedPage:render()
 				onDisconnect = self.props.onDisconnect,
 			}),
 
+			StagedChanges = if self.props.isStaging
+				then e(StagedChanges, {
+					stagedPatch = self.props.stagedPatch,
+					busy = self.props.stagedBusy,
+					transparency = self.props.transparency,
+					layoutOrder = 3,
+
+					onPlay = self.props.onPlay,
+					onDeploy = self.props.onDeploy,
+				})
+				else nil,
+
 			Buttons = e("Frame", {
 				Size = UDim2.new(1, 0, 0, 34),
-				LayoutOrder = 3,
+				LayoutOrder = 4,
 				BackgroundTransparency = 1,
 				ZIndex = 2,
 			}, {
@@ -528,6 +619,66 @@ function ConnectedPage:render()
 							onBack = function()
 								self:setState({
 									renderChanges = false,
+								})
+							end,
+						}),
+					}),
+				}),
+			}),
+
+			StagedChangesViewer = e(StudioPluginGui, {
+				id = "Rojo_StagedChangesViewer",
+				title = "Staged changes",
+				active = self.props.isStaging == true and self.state.renderStagedChanges,
+				isEphemeral = true,
+
+				initDockState = Enum.InitialDockState.Float,
+				overridePreviousState = true,
+				floatingSize = Vector2.new(400, 500),
+				minimumSize = Vector2.new(300, 300),
+
+				zIndexBehavior = Enum.ZIndexBehavior.Sibling,
+
+				onClose = function()
+					self:setState({
+						renderStagedChanges = false,
+					})
+				end,
+			}, {
+				TooltipsProvider = e(Tooltip.Provider, nil, {
+					Tooltips = e(Tooltip.Container, nil),
+					Content = e("Frame", {
+						Size = UDim2.fromScale(1, 1),
+						BackgroundTransparency = 1,
+					}, {
+						Changes = e(ChangesViewer, {
+							staged = true,
+							transparency = self.props.transparency,
+							rendered = self.props.isStaging == true and self.state.renderStagedChanges,
+							patchData = {
+								patch = self.props.stagedPatch or PatchSet.newEmpty(),
+								unapplied = PatchSet.newEmpty(),
+								timestamp = self.props.stagedTimestamp or os.time(),
+							},
+							patchTree = self.props.stagedPatchTree,
+							serveSession = self.props.serveSession,
+							showStringDiff = function(currentString: string, incomingString: string)
+								self:setState({
+									showingStringDiff = true,
+									currentString = currentString,
+									incomingString = incomingString,
+								})
+							end,
+							showTableDiff = function(oldTable: { [any]: any? }, newTable: { [any]: any? })
+								self:setState({
+									showingTableDiff = true,
+									oldTable = oldTable,
+									newTable = newTable,
+								})
+							end,
+							onBack = function()
+								self:setState({
+									renderStagedChanges = false,
 								})
 							end,
 						}),

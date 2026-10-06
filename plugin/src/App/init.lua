@@ -2,6 +2,7 @@ local ChangeHistoryService = game:GetService("ChangeHistoryService")
 local Players = game:GetService("Players")
 local ServerStorage = game:GetService("ServerStorage")
 local RunService = game:GetService("RunService")
+local StudioTestService = game:GetService("StudioTestService")
 
 local Rojo = script:FindFirstAncestor("Rojo")
 local Plugin = Rojo.Plugin
@@ -24,6 +25,8 @@ local PatchTree = require(Plugin.PatchTree)
 local preloadAssets = require(Plugin.preloadAssets)
 local soundPlayer = require(Plugin.soundPlayer)
 local ignorePlaceIds = require(Plugin.ignorePlaceIds)
+local isTeamCreate = require(Plugin.isTeamCreate)
+local StagedPlaytest = require(Plugin.StagedPlaytest)
 local timeUtil = require(Plugin.timeUtil)
 local Theme = require(script.Theme)
 
@@ -135,10 +138,26 @@ function App:init()
 		},
 		notifications = {},
 		toolbarIcon = Assets.Images.PluginButton,
+		isStaging = false,
+		stagedBusy = false,
+		stagedPatch = PatchSet.newEmpty(),
+		stagedPatchTree = nil,
+		stagedTimestamp = os.time(),
 	})
 
 	if RunService:IsEdit() then
 		self:checkForUpdates()
+
+		local success, editModeSignal = pcall(function()
+			return StudioTestService:GetPropertyChangedSignal("EditModeActive")
+		end)
+		if success then
+			self.editModeConnection = editModeSignal:Connect(function()
+				if not StagedPlaytest.isEditModeActive() then
+					self:onPlaytestStarted()
+				end
+			end)
+		end
 
 		self:startSyncReminderPolling()
 		self.disconnectSyncReminderPollingChanged = Settings:onChanged("syncReminderPolling", function(enabled)
@@ -162,7 +181,11 @@ function App:init()
 	end
 	self.autoConnectPlaytestServerListener = Settings:onChanged("autoConnectPlaytestServer", function(enabled)
 		if enabled then
-			if self:isAutoConnectPlaytestServerWriteable() and self.serveSession ~= nil then
+			if
+				self:isAutoConnectPlaytestServerWriteable()
+				and self.serveSession ~= nil
+				and not self.serveSession:isStaging()
+			then
 				-- Write the existing session
 				local baseUrl = self.serveSession.__apiContext.__baseUrl
 				self:setRunningConnectionInfo(baseUrl)
@@ -177,6 +200,9 @@ function App:willUnmount()
 	self:endSession()
 
 	self.waypointConnection:Disconnect()
+	if self.editModeConnection then
+		self.editModeConnection:Disconnect()
+	end
 	self.confirmationBindable:Destroy()
 
 	self.disconnectUpdatesCheckChanged()
@@ -556,12 +582,23 @@ function App:sendSyncReminder(message: string, shownActions: { string })
 	})
 end
 
+function App:getRunningConnectionUrl(): string?
+	-- Staged playtests pass the URL through their test args, since in Team
+	-- Create the workspace attribute would replicate to collaborators.
+	local stagedPlaytest = StagedPlaytest.getCurrent()
+	if stagedPlaytest and stagedPlaytest.serverUrl then
+		return stagedPlaytest.serverUrl
+	end
+
+	return workspace:GetAttribute("__Rojo_ConnectionUrl")
+end
+
 function App:isAutoConnectPlaytestServerAvailable()
 	return RunService:IsRunning()
 		and RunService:IsStudio()
 		and RunService:IsServer()
 		and Settings:get("autoConnectPlaytestServer")
-		and workspace:GetAttribute("__Rojo_ConnectionUrl")
+		and self:getRunningConnectionUrl() ~= nil
 end
 
 function App:isAutoConnectPlaytestServerWriteable()
@@ -588,7 +625,7 @@ function App:clearRunningConnectionInfo()
 end
 
 function App:useRunningConnectionInfo()
-	local connectionInfo = workspace:GetAttribute("__Rojo_ConnectionUrl")
+	local connectionInfo = self:getRunningConnectionUrl()
 	if not connectionInfo then
 		return
 	end
@@ -600,8 +637,19 @@ function App:useRunningConnectionInfo()
 	self.setPort(port)
 end
 
+function App:shouldStageChanges(): boolean
+	return Settings:get("stageChangesInTeamCreate") and isTeamCreate()
+end
+
 function App:startSession()
-	local claimedLock, priorOwner = self:claimSyncLock()
+	local stageChanges = self:shouldStageChanges()
+
+	-- Staging sessions never write to the DataModel on their own, so several
+	-- collaborators can stage at once and the sync lock isn't needed.
+	local claimedLock, priorOwner = true, nil
+	if not stageChanges then
+		claimedLock, priorOwner = self:claimSyncLock()
+	end
 	if not claimedLock then
 		local msg = string.format("Could not sync because user '%s' is already syncing", tostring(priorOwner))
 
@@ -629,11 +677,24 @@ function App:startSession()
 	local serveSession = ServeSession.new({
 		apiContext = apiContext,
 		twoWaySync = Settings:get("twoWaySync"),
+		stageChanges = stageChanges,
 	})
 
 	serveSession:setUpdateLoadingTextCallback(function(text: string)
 		self:setState({
 			connectingText = text,
+		})
+	end)
+
+	serveSession:onStagedChanged(function(stagedPatch, instanceMap)
+		if self.serveSession ~= serveSession then
+			return
+		end
+
+		self:setState({
+			stagedPatch = stagedPatch,
+			stagedPatchTree = PatchTree.build(stagedPatch, instanceMap, { "Property", "Current", "Staged" }),
+			stagedTimestamp = DateTime.now().UnixTimestamp,
 		})
 	end)
 
@@ -687,28 +748,45 @@ function App:startSession()
 		elseif status == ServeSession.Status.Connected then
 			self.knownProjects[details] = true
 			self:setPriorSyncInfo(host, port, details)
-			self:setRunningConnectionInfo(baseUrl)
+			if not stageChanges then
+				-- This attribute would replicate to collaborators in Team
+				-- Create. Staged playtests pass the URL along themselves.
+				self:setRunningConnectionInfo(baseUrl)
+			end
 
 			local address = ("%s:%s"):format(host, port)
 			self:setState({
 				appStatus = AppStatus.Connected,
 				projectName = details,
 				address = address,
+				isStaging = stageChanges,
 				toolbarIcon = Assets.Images.PluginButtonConnected,
 			})
 			self:addNotification({
-				text = string.format("Connected to session '%s' at %s.", details, address),
+				text = if stageChanges
+					then string.format(
+						"Connected to session '%s' at %s.\nChanges are staged locally until you deploy them.",
+						details,
+						address
+					)
+					else string.format("Connected to session '%s' at %s.", details, address),
 			})
 		elseif status == ServeSession.Status.Disconnected then
 			self.serveSession = nil
-			self:releaseSyncLock()
-			self:clearRunningConnectionInfo()
+			if not stageChanges then
+				self:releaseSyncLock()
+				self:clearRunningConnectionInfo()
+			end
 			self:setState({
 				patchData = {
 					patch = PatchSet.newEmpty(),
 					unapplied = PatchSet.newEmpty(),
 					timestamp = os.time(),
 				},
+				isStaging = false,
+				stagedBusy = false,
+				stagedPatch = PatchSet.newEmpty(),
+				stagedPatchTree = Roact.None,
 			})
 
 			-- Details being present indicates that this
@@ -852,8 +930,120 @@ function App:endSession()
 	Log.trace("Session terminated by user")
 end
 
+function App:getStagingSession()
+	local serveSession = self.serveSession
+	if
+		serveSession == nil
+		or not serveSession:isStaging()
+		or serveSession:getStatus() ~= ServeSession.Status.Connected
+	then
+		return nil
+	end
+
+	return serveSession
+end
+
+function App:deployStagedChanges()
+	local serveSession = self:getStagingSession()
+	if serveSession == nil or self.state.stagedBusy then
+		return
+	end
+
+	self:setState({
+		stagedBusy = true,
+	})
+
+	serveSession
+		:deployStaged()
+		:andThen(function(patch, unappliedPatch)
+			if PatchSet.isEmpty(patch) then
+				self:addNotification({
+					text = "There are no staged changes to deploy.",
+				})
+				return
+			end
+
+			-- Count instances to match the staged count shown in the panel.
+			local failed = PatchSet.countInstances(unappliedPatch)
+			local deployed = math.max(PatchSet.countInstances(patch) - failed, 0)
+			self:addNotification({
+				text = if failed > 0
+					then string.format("Deployed %d staged changes. %d could not be deployed.", deployed, failed)
+					else string.format("Deployed %d staged changes to the place.", deployed),
+				timeout = if failed > 0 then 10 else 5,
+			})
+		end)
+		:catch(function(err)
+			Log.warn("Could not deploy staged changes: {}", err)
+			self:addNotification({
+				text = "Could not deploy staged changes: " .. tostring(err),
+				timeout = 10,
+			})
+		end)
+		:finally(function()
+			self:setState({
+				stagedBusy = false,
+			})
+		end)
+end
+
+function App:startStagedPlaytest(mode)
+	local serveSession = self:getStagingSession()
+	if serveSession == nil or self.state.stagedBusy then
+		return
+	end
+
+	self:setState({
+		stagedBusy = true,
+	})
+
+	-- Set before the playtest starts so that onPlaytestStarted knows this one
+	-- includes the staged changes.
+	self.startingStagedPlaytest = true
+
+	serveSession
+		:startStagedPlaytest(mode)
+		:catch(function(err)
+			Log.warn("Could not start a playtest with staged changes: {}", err)
+			self:addNotification({
+				text = "Could not start a playtest with staged changes: " .. tostring(err),
+				timeout = 10,
+			})
+		end)
+		:finally(function()
+			self.startingStagedPlaytest = false
+			self:setState({
+				stagedBusy = false,
+			})
+		end)
+end
+
+function App:onPlaytestStarted()
+	if self.startingStagedPlaytest then
+		return
+	end
+
+	local serveSession = self:getStagingSession()
+	if serveSession == nil then
+		return
+	end
+
+	local stagedCount = PatchSet.countInstances(serveSession:getStagedPatch())
+	if stagedCount == 0 then
+		return
+	end
+
+	-- Studio's own Play buttons can't include staged changes, and this warning
+	-- is the only way to notice from inside the playtest.
+	Log.warn(
+		"This playtest does not include your {} staged Rojo changes. Use Play in the Rojo panel"
+			.. " (or the 'Rojo: Play With Staged Changes' action) to test them.",
+		stagedCount
+	)
+end
+
 function App:render()
-	local pluginName = "Rojo " .. Version.display(Config.version)
+	local pluginName = "Rojo Team Create " .. Version.display(Config.version)
 
 	local function createPageElement(appStatus, additionalProps)
 		additionalProps = additionalProps or {}
@@ -942,6 +1132,20 @@ function App:render()
 						patchTree = self.state.patchTree,
 						patchData = self.state.patchData,
 						serveSession = self.serveSession,
+
+						isStaging = self.state.isStaging,
+						stagedBusy = self.state.stagedBusy,
+						stagedPatch = self.state.stagedPatch,
+						stagedPatchTree = self.state.stagedPatchTree,
+						stagedTimestamp = self.state.stagedTimestamp,
+
+						onDeploy = function()
+							self:deployStagedChanges()
+						end,
+
+						onPlay = function()
+							self:startStagedPlaytest(StagedPlaytest.Mode.Play)
+						end,
 
 						onDisconnect = function()
 							self:endSession()
@@ -1036,12 +1240,45 @@ function App:render()
 				end,
 			}),
 
+			deployStagedAction = e(StudioPluginAction, {
+				name = "RojoDeployStaged",
+				title = "Rojo: Deploy Staged Changes",
+				description = "Writes your staged Rojo changes to the place so they save and replicate to Team Create",
+				icon = Assets.Images.PluginButton,
+				bindable = true,
+				onTriggered = function()
+					self:deployStagedChanges()
+				end,
+			}),
+
+			playStagedAction = e(StudioPluginAction, {
+				name = "RojoPlayStaged",
+				title = "Rojo: Play With Staged Changes",
+				description = "Starts a local Play test that includes your staged Rojo changes",
+				icon = Assets.Images.PluginButton,
+				bindable = true,
+				onTriggered = function()
+					self:startStagedPlaytest(StagedPlaytest.Mode.Play)
+				end,
+			}),
+
+			runStagedAction = e(StudioPluginAction, {
+				name = "RojoRunStaged",
+				title = "Rojo: Run With Staged Changes",
+				description = "Starts a local Run test that includes your staged Rojo changes",
+				icon = Assets.Images.PluginButton,
+				bindable = true,
+				onTriggered = function()
+					self:startStagedPlaytest(StagedPlaytest.Mode.Run)
+				end,
+			}),
+
 			toolbar = e(StudioToolbar, {
 				name = pluginName,
 			}, {
 				button = e(StudioToggleButton, {
-					name = "Rojo",
-					tooltip = "Show or hide the Rojo panel",
+					name = "Rojo TC",
+					tooltip = "Show or hide the Rojo Team Create panel",
 					icon = self.state.toolbarIcon,
 					active = self.state.guiEnabled,
 					enabled = true,

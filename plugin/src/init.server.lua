@@ -2,6 +2,10 @@ if not plugin then
 	return
 end
 
+-- The edit DataModel is holding staged changes in Team Create until this runs,
+-- so do it before anything slower like mounting the UI.
+require(script.StagedPlaytest).signalReadyIfStaged()
+
 local Rojo = script:FindFirstAncestor("Rojo")
 local Packages = Rojo.Packages
 
@@ -19,7 +23,7 @@ end)
 local app = Roact.createElement(App, {
 	plugin = plugin,
 })
-local tree = Roact.mount(app, game:GetService("CoreGui"), "Rojo UI")
+local tree = Roact.mount(app, game:GetService("CoreGui"), "Rojo Team Create UI")
 
 plugin.Unloading:Connect(function()
 	Roact.unmount(tree)
