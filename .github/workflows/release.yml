@@ -4,6 +4,11 @@ on:
   push:
     tags: ["v*"]
 
+# Creating the release and uploading its assets needs write access, which
+# repositories don't always grant workflows by default.
+permissions:
+  contents: write
+
 jobs:
   create-release:
     name: Create Release
