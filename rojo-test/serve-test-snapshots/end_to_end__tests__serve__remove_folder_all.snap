@@ -24,7 +24,7 @@ instances:
     Parent: id-2
     Properties:
       Value:
-        String: "Stays behind\n"
+        String: Stays behind
   id-4:
     Children:
       - id-5

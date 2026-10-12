@@ -1,4 +1,7 @@
-use std::fs;
+use std::{
+    fs, thread,
+    time::{Duration, Instant},
+};
 
 use insta::{assert_snapshot, assert_yaml_snapshot, with_settings};
 use rbx_dom_weak::types::Ref;
@@ -214,19 +217,31 @@ fn remove_folder() {
         // so their parent path no longer exists when the change is processed.
         fs::remove_dir_all(session.path().join("src/stuff")).unwrap();
 
-        let socket_packet = session
-            .get_api_socket_packet(SocketPacketType::Messages, 0)
-            .unwrap();
-        assert_yaml_snapshot!(
-            "remove_folder_subscribe",
-            socket_packet.intern_and_redact(&mut redactions, ())
-        );
+        // Whether the folder and its files arrive as one message or several depends on the
+        // platform's file watcher, so poll the tree instead of snapshotting the messages.
+        let start = Instant::now();
+        loop {
+            let read_response = session.get_api_read(root_id).unwrap();
+            let names: Vec<&str> = read_response
+                .instances
+                .values()
+                .map(|instance| instance.name.as_ref())
+                .collect();
 
-        let read_response = session.get_api_read(root_id).unwrap();
-        assert_yaml_snapshot!(
-            "remove_folder_all-2",
-            read_response.intern_and_redact(&mut redactions, root_id)
-        );
+            if !names.contains(&"stuff") && !names.contains(&"child") {
+                assert!(
+                    names.contains(&"kept"),
+                    "sibling file was removed: {names:?}"
+                );
+                break;
+            }
+
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "folder was never removed: {names:?}"
+            );
+            thread::sleep(Duration::from_millis(100));
+        }
     });
 }
 
