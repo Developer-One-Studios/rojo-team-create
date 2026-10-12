@@ -197,6 +197,40 @@ fn remove_file() {
 }
 
 #[test]
+fn remove_folder() {
+    run_serve_test("remove_folder", |session, mut redactions| {
+        let info = session.get_api_rojo().unwrap();
+        let root_id = info.root_instance_id;
+
+        assert_yaml_snapshot!("remove_folder_info", redactions.redacted_yaml(info));
+
+        let read_response = session.get_api_read(root_id).unwrap();
+        assert_yaml_snapshot!(
+            "remove_folder_all",
+            read_response.intern_and_redact(&mut redactions, root_id)
+        );
+
+        // The watcher reports the files inside a removed folder after the folder itself is gone,
+        // so their parent path no longer exists when the change is processed.
+        fs::remove_dir_all(session.path().join("src/stuff")).unwrap();
+
+        let socket_packet = session
+            .get_api_socket_packet(SocketPacketType::Messages, 0)
+            .unwrap();
+        assert_yaml_snapshot!(
+            "remove_folder_subscribe",
+            socket_packet.intern_and_redact(&mut redactions, ())
+        );
+
+        let read_response = session.get_api_read(root_id).unwrap();
+        assert_yaml_snapshot!(
+            "remove_folder_all-2",
+            read_response.intern_and_redact(&mut redactions, root_id)
+        );
+    });
+}
+
+#[test]
 fn edit_init() {
     run_serve_test("edit_init", |session, mut redactions| {
         let info = session.get_api_rojo().unwrap();

@@ -2,7 +2,7 @@ use crossbeam_channel::{select, Receiver, RecvError, Sender};
 use jod_thread::JoinHandle;
 use memofs::{IoResultExt, Vfs, VfsEvent};
 use rbx_dom_weak::types::{Ref, Variant};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::{
     fs,
     sync::{Arc, Mutex},
@@ -168,16 +168,17 @@ impl JobThreadContext {
         // For a given VFS event, we might have many changes to different parts
         // of the tree. Calculate and apply all of these changes.
         let applied_patches = match event {
-            VfsEvent::Create(path) | VfsEvent::Write(path) => {
-                self.apply_patches(self.vfs.canonicalize(&path).unwrap())
-            }
-            VfsEvent::Remove(path) => {
-                // MemoFS does not track parent removals yet, so we can canonicalize
-                // the parent path safely and then append the removed path's file name.
-                let parent = path.parent().unwrap();
-                let file_name = path.file_name().unwrap();
-                let parent_normalized = self.vfs.canonicalize(parent).unwrap();
-                self.apply_patches(parent_normalized.join(file_name))
+            VfsEvent::Create(path) | VfsEvent::Write(path) | VfsEvent::Remove(path) => {
+                match canonicalize_event_path(&self.vfs, &path) {
+                    Some(normalized) => self.apply_patches(normalized),
+                    None => {
+                        log::warn!(
+                            "Ignoring change to {}, no part of its path exists",
+                            path.display()
+                        );
+                        Vec::new()
+                    }
+                }
             }
             _ => {
                 log::warn!("Unhandled VFS event: {:?}", event);
@@ -294,6 +295,25 @@ impl JobThreadContext {
     }
 }
 
+/// Canonicalizes the path named by a filesystem event, even when that path or some of its
+/// ancestors no longer exist. Watcher events routinely name paths that are already gone: a removed
+/// file, every file inside a folder that was deleted as a whole (reported after the folder itself
+/// is gone), or a file deleted right after it was written. The deepest ancestor that still exists
+/// is canonicalized and the missing rest of the path is joined back onto it.
+fn canonicalize_event_path(vfs: &Vfs, path: &Path) -> Option<PathBuf> {
+    path.ancestors().find_map(|ancestor| {
+        let normalized = vfs.canonicalize(ancestor).ok()?;
+        let missing = path
+            .strip_prefix(ancestor)
+            .expect("an ancestor is always a prefix of its path");
+        Some(if missing.as_os_str().is_empty() {
+            normalized
+        } else {
+            normalized.join(missing)
+        })
+    })
+}
+
 fn compute_and_apply_changes(tree: &mut RojoTree, vfs: &Vfs, id: Ref) -> Option<AppliedPatchSet> {
     let metadata = tree
         .get_metadata(id)
@@ -382,4 +402,55 @@ fn compute_and_apply_changes(tree: &mut RojoTree, vfs: &Vfs, id: Ref) -> Option<
     };
 
     Some(applied_patch_set)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use memofs::{InMemoryFs, VfsSnapshot};
+
+    fn project_vfs() -> Vfs {
+        let mut imfs = InMemoryFs::new();
+        imfs.load_snapshot(
+            "/project",
+            VfsSnapshot::dir([(
+                "src",
+                VfsSnapshot::dir([("kept.lua", VfsSnapshot::file("return {}"))]),
+            )]),
+        )
+        .unwrap();
+        Vfs::new(imfs)
+    }
+
+    #[test]
+    fn canonicalize_event_path_existing() {
+        let vfs = project_vfs();
+
+        assert_eq!(
+            canonicalize_event_path(&vfs, Path::new("/project/src/../src/kept.lua")),
+            Some(PathBuf::from("/project/src/kept.lua"))
+        );
+    }
+
+    #[test]
+    fn canonicalize_event_path_inside_removed_folder() {
+        let vfs = project_vfs();
+
+        // A file inside a folder that was deleted as a whole: neither the file nor its parent
+        // exists anymore, which used to crash the change processor.
+        assert_eq!(
+            canonicalize_event_path(&vfs, Path::new("/project/src/../src/stuff/init.lua")),
+            Some(PathBuf::from("/project/src/stuff/init.lua"))
+        );
+    }
+
+    #[test]
+    fn canonicalize_event_path_nothing_exists() {
+        let vfs = project_vfs();
+
+        assert_eq!(
+            canonicalize_event_path(&vfs, Path::new("missing/init.lua")),
+            None
+        );
+    }
 }
