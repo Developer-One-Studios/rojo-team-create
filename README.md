@@ -28,7 +28,11 @@ Click the staged count in the panel to see what would change. Staging can be tur
 
 1. Download `RojoTeamCreate.rbxm` from the [latest release](https://github.com/Developer-One-Studios/rojo-team-create/releases/latest) and put it in Studio's **Plugins > Plugins Folder**.
 2. Remove or disable the regular Rojo plugin in your own Studio.
-3. Use the regular Rojo server, version 7.7 or newer (`rokit add rojo-rbx/rojo`), and run `rojo serve`.
+3. Install the Rojo Team Create server with `rokit add Developer-One-Studios/rojo-team-create rojo`, and run `rojo serve`. It's a drop-in replacement for the regular Rojo server, with fixes the regular one doesn't have.
+
+## Updating
+
+Releases can change the plugin, the server, or both; the [changelog](CHANGELOG.md) says which. Update the plugin by replacing `RojoTeamCreate.rbxm`, and the server with `rokit update rojo`. If their versions are incompatible, the plugin won't connect and says which one to update.
 
 ## Runtime loader
 
