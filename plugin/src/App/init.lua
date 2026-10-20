@@ -681,10 +681,20 @@ function App:startSession()
 			return
 		end
 
+		local loaderInstalled = serveSession:isLoaderInstalled()
+		-- Setting up or removing the loader from this panel updates the state
+		-- first, so only someone else removing it gets here.
+		if self.state.loaderInstalled == true and not loaderInstalled then
+			self:promptRuntimeLoader(
+				"The loader script was removed from this place, so playtests won't include your staged changes. Set it up again?"
+			)
+		end
+
 		self:setState({
 			stagedPatch = stagedPatch,
 			stagedPatchTree = PatchTree.build(stagedPatch, instanceMap, { "Property", "Current", "Staged" }),
 			stagedTimestamp = DateTime.now().UnixTimestamp,
+			loaderInstalled = loaderInstalled,
 		})
 	end)
 
@@ -775,6 +785,7 @@ function App:startSession()
 				stagedBusy = false,
 				stagedPatch = PatchSet.newEmpty(),
 				stagedPatchTree = Roact.None,
+				loaderInstalled = Roact.None,
 			})
 
 			-- Details being present indicates that this
@@ -997,8 +1008,12 @@ function App:offerRuntimeLoader(projectName: string)
 	end
 	self.offeredRuntimeLoader[projectName] = true
 
+	self:promptRuntimeLoader("This place needs the loader script for staging. Set it up now?")
+end
+
+function App:promptRuntimeLoader(text: string)
 	self:addNotification({
-		text = "This place needs the loader script for staging. Set it up now?",
+		text = text,
 		timeout = 30,
 		actions = {
 			SetUp = {
@@ -1041,6 +1056,9 @@ function App:setUpRuntimeLoader()
 	serveSession
 		:setUpRuntimeLoader()
 		:andThen(function()
+			self:setState({
+				loaderInstalled = true,
+			})
 			self:addNotification({
 				text = "Loader script added.",
 			})
@@ -1085,6 +1103,9 @@ function App:removeRuntimeLoader()
 	serveSession
 		:removeRuntimeLoader()
 		:andThen(function()
+			self:setState({
+				loaderInstalled = false,
+			})
 			self:addNotification({
 				text = "Loader script removed.",
 				timeout = 10,
@@ -1220,6 +1241,7 @@ function App:render()
 						stagedPatch = self.state.stagedPatch,
 						stagedPatchTree = self.state.stagedPatchTree,
 						stagedTimestamp = self.state.stagedTimestamp,
+						loaderInstalled = self.state.loaderInstalled,
 
 						onDeploy = function()
 							self:deployStagedChanges()

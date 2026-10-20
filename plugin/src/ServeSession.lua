@@ -3,6 +3,7 @@ local RunService = game:GetService("RunService")
 local ChangeHistoryService = game:GetService("ChangeHistoryService")
 local SerializationService = game:GetService("SerializationService")
 local Selection = game:GetService("Selection")
+local ServerScriptService = game:GetService("ServerScriptService")
 
 local Packages = script.Parent.Parent.Packages
 local Log = require(Packages.Log)
@@ -152,6 +153,19 @@ function ServeSession.new(options)
 		end
 	end)
 	table.insert(connections, connection)
+
+	if stageChanges then
+		-- A collaborator can add or delete the runtime loader at any time. Rojo
+		-- doesn't track it, so nothing else would refresh the staged changes,
+		-- and the session would keep believing the loader is still there.
+		local function onServerScriptServiceChildChanged(child)
+			if RuntimeLoader.isLoaderName(child.Name) then
+				self:__scheduleStagedRefresh()
+			end
+		end
+		table.insert(connections, ServerScriptService.ChildAdded:Connect(onServerScriptServiceChildChanged))
+		table.insert(connections, ServerScriptService.ChildRemoved:Connect(onServerScriptServiceChildChanged))
+	end
 
 	self = {
 		__status = Status.NotStarted,

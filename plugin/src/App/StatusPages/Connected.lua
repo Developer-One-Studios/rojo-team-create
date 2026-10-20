@@ -268,7 +268,10 @@ end
 local function StagedChanges(props)
 	local stagedCount = PatchSet.countInstances(props.stagedPatch)
 	local busy = props.busy == true
-	local canDeploy = stagedCount > 0 and not busy
+	-- Unknown until the first staged changes are computed, which counts as
+	-- installed so the buttons don't flash on connect.
+	local loaderMissing = props.loaderInstalled == false
+	local canDeploy = stagedCount > 0 and not busy and not loaderMissing
 
 	return e("Frame", {
 		Size = UDim2.new(1, 0, 0, 34),
@@ -286,20 +289,25 @@ local function StagedChanges(props)
 			Wraps = true,
 		}),
 
+		-- Stands out while the place has no loader, since staged changes can't
+		-- reach playtests or be deployed until it's added.
 		SetUp = e(TextButton, {
 			text = "Set up",
-			style = "Bordered",
-			enabled = not busy,
+			style = if loaderMissing then "Solid" else "Bordered",
+			enabled = loaderMissing and not busy,
 			transparency = props.transparency,
 			layoutOrder = 1,
 			onClick = function()
+				-- Still clickable once set up, so it can say so.
 				if not busy then
 					props.onSetUp()
 				end
 			end,
 		}, {
 			Tip = e(Tooltip.Trigger, {
-				text = "Add the runtime loader to this place, so your staged changes never leave your machine",
+				text = if loaderMissing
+					then "Add the runtime loader to this place, so your staged changes never leave your machine"
+					else "This place already has the runtime loader",
 			}),
 		}),
 
@@ -529,6 +537,7 @@ function ConnectedPage:render()
 				then e(StagedChanges, {
 					stagedPatch = self.props.stagedPatch,
 					busy = self.props.stagedBusy,
+					loaderInstalled = self.props.loaderInstalled,
 					transparency = self.props.transparency,
 					layoutOrder = 3,
 
