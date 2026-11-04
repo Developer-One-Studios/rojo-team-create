@@ -35,6 +35,8 @@ local OVERLAY_NAME = "ROJO_TEAM_CREATE_LOCAL"
 local STATUS_NAME = "ROJO_TEAM_CREATE_STATUS"
 -- Only the first few are named, which keeps the attribute readable in the Properties panel.
 local MAX_SKIPPED_PATHS = 20
+-- Roblox refuses a Source this long when it is set directly.
+local MAX_DIRECT_SOURCE_LENGTH = 200000
 local ENABLE_TAG = "RojoTeamCreateEnable"
 
 -- Folders inside the overlay. These have to match the loader's source.
@@ -366,6 +368,9 @@ function RuntimeLoader.writeStatus(status: {
 	camera:SetAttribute("SkippedCount", status.skippedCount)
 	camera:SetAttribute("SkippedPaths", table.concat(status.skippedPaths, "\n"))
 	camera:SetAttribute("RefreshedAt", DateTime.now().UnixTimestampMillis / 1000)
+	-- Earlier builds could not stage a source too long to set directly, so tools
+	-- read this to tell whether waiting for one to be staged can help.
+	camera:SetAttribute("LongSources", true)
 end
 
 function RuntimeLoader.clearStatus()
@@ -386,6 +391,8 @@ end
 
 -- Source is set directly on overlay copies. They never replicate, so they
 -- don't need to go through ScriptEditorService, which happens asynchronously.
+-- A source too long to set directly goes through it anyway, and waits for it,
+-- since a copy that kept its old source would run old code in playtests.
 local function applyProperty(instance: Instance, propertyName: string, encodedValue, instanceMap): boolean
 	local decodeSuccess, value = decodeValue(encodedValue, instanceMap)
 	if not decodeSuccess then
@@ -394,7 +401,13 @@ local function applyProperty(instance: Instance, propertyName: string, encodedVa
 
 	if propertyName == "Source" and instance:IsA("LuaSourceContainer") then
 		return pcall(function()
-			(instance :: any).Source = value
+			if #value < MAX_DIRECT_SOURCE_LENGTH then
+				(instance :: any).Source = value
+			else
+				ScriptEditorService:UpdateSourceAsync(instance :: any, function()
+					return value
+				end)
+			end
 		end)
 	end
 
@@ -456,11 +469,19 @@ local function buildReplacement(instance: Instance, update, instanceMap): Instan
 	return replacement
 end
 
+-- Counts overlay writes, so that one which waited on a long source can tell
+-- that a newer one started meanwhile.
+local overlayWrites = 0
+
 --[[
 	Rebuilds the overlay so that it matches the staged patch. Returns how many
-	staged changes couldn't be included, and the paths of the first few.
+	staged changes couldn't be included, and the paths of the first few, or
+	nothing when a newer write started while this one waited on a long source,
+	since the newer one owns the overlay.
 ]]
-function RuntimeLoader.writeOverlay(patch, instanceMap): (number, { string })
+function RuntimeLoader.writeOverlay(patch, instanceMap): (number?, { string }?)
+	overlayWrites += 1
+	local write = overlayWrites
 	RuntimeLoader.clearOverlay()
 
 	if PatchSet.isEmpty(patch) then
@@ -553,6 +574,10 @@ function RuntimeLoader.writeOverlay(patch, instanceMap): (number, { string })
 	end
 	scratchMap:stop()
 
+	if write ~= overlayWrites then
+		overlay:Destroy()
+		return nil, nil
+	end
 	overlay.Parent = ServerStorage
 
 	return skipped, skippedPaths

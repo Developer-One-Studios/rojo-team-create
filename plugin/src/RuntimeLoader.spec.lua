@@ -165,6 +165,7 @@ return function()
 			expect(camera:GetAttribute("SkippedCount")).to.equal(2)
 			expect(camera:GetAttribute("SkippedPaths")).to.equal("Lighting\nSoundService")
 			expect(typeof(camera:GetAttribute("RefreshedAt"))).to.equal("number")
+			expect(camera:GetAttribute("LongSources")).to.equal(true)
 		end)
 
 		it("updates the one Camera, counts as the plugin's own, and clears", function()
@@ -215,6 +216,65 @@ return function()
 			local emptySkipped, emptyPaths = RuntimeLoader.writeOverlay(PatchSet.newEmpty(), instanceMap)
 			expect(emptySkipped).to.equal(0)
 			expect(#emptyPaths).to.equal(0)
+			instanceMap:stop()
+		end)
+
+		it("stages a source too long to set directly", function()
+			local module = Instance.new("ModuleScript")
+			module.Name = "Network"
+			module.Parent = game:GetService("ReplicatedStorage")
+			local instanceMap = InstanceMap.new(nil)
+			instanceMap:insert("NETWORK", module)
+			-- Roblox refuses a Source of 200,000 characters or more when it is set directly.
+			local source = "return " .. string.rep("1", 210000)
+			local patch = PatchSet.newEmpty()
+			table.insert(patch.updated, { id = "NETWORK", changedProperties = { Source = { String = source } } })
+
+			local skipped = RuntimeLoader.writeOverlay(patch, instanceMap)
+			local overlay = game:GetService("ServerStorage"):FindFirstChild(RuntimeLoader.OVERLAY_NAME)
+			expect(skipped).to.equal(0)
+			expect(#overlay.REPLACE.Network:GetChildren()[1].Source).to.equal(#source)
+
+			instanceMap:stop()
+			module:Destroy()
+		end)
+
+		it("keeps only the newest overlay when a write starts while a long source is written", function()
+			local instanceMap = InstanceMap.new(nil)
+			instanceMap:insert("STORAGE", game:GetService("ReplicatedStorage"))
+			local function addedModule(source)
+				local patch = PatchSet.newEmpty()
+				patch.added.NETWORK = {
+					ClassName = "ModuleScript",
+					Name = "Network",
+					Parent = "STORAGE",
+					Properties = { Source = { String = source } },
+					Children = {},
+				}
+				return patch
+			end
+
+			-- In Team Create, writing a long source to a script inside the overlay
+			-- yields, so the second write starts before the first one finishes.
+			local finished = false
+			task.spawn(function()
+				RuntimeLoader.writeOverlay(addedModule("return " .. string.rep("1", 210000)), instanceMap)
+				finished = true
+			end)
+			RuntimeLoader.writeOverlay(addedModule("return 2"), instanceMap)
+			while not finished do
+				task.wait()
+			end
+
+			local overlays = {}
+			for _, child in game:GetService("ServerStorage"):GetChildren() do
+				if child.Name == RuntimeLoader.OVERLAY_NAME then
+					table.insert(overlays, child)
+				end
+			end
+			expect(#overlays).to.equal(1)
+			expect(overlays[1].ADD:GetChildren()[1]:GetChildren()[1].Source).to.equal("return 2")
+
 			instanceMap:stop()
 		end)
 	end)

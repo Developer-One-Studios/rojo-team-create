@@ -683,6 +683,10 @@ function ServeSession:__updateOverlay(patch, instanceMap)
 	end
 
 	local success, skippedOrError, skippedPaths = pcall(RuntimeLoader.writeOverlay, patch, instanceMap)
+	if success and skippedOrError == nil then
+		-- A newer write took over while this one waited, and reports for itself.
+		return
+	end
 	if not success then
 		Log.warn("Could not prepare staged changes for playtests: {}", skippedOrError)
 	elseif skippedOrError ~= self.__lastOverlaySkipped and skippedOrError > 0 then
