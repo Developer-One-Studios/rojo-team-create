@@ -137,4 +137,85 @@ return function()
 			other:Destroy()
 		end)
 	end)
+
+	describe("status", function()
+		local ServerStorage = game:GetService("ServerStorage")
+
+		afterEach(function()
+			RuntimeLoader.clearStatus()
+		end)
+
+		it("writes what the session is doing to a Camera that is never saved", function()
+			RuntimeLoader.writeStatus({
+				projectName = "Fixture",
+				staging = true,
+				stagedCount = 3,
+				skippedCount = 2,
+				skippedPaths = { "Lighting", "SoundService" },
+			})
+
+			local camera = ServerStorage:FindFirstChild(RuntimeLoader.STATUS_NAME)
+			expect(camera).to.be.ok()
+			expect(camera:IsA("Camera")).to.equal(true)
+			expect(camera.Archivable).to.equal(false)
+			expect(camera:GetAttribute("Connected")).to.equal(true)
+			expect(camera:GetAttribute("ProjectName")).to.equal("Fixture")
+			expect(camera:GetAttribute("Staging")).to.equal(true)
+			expect(camera:GetAttribute("StagedCount")).to.equal(3)
+			expect(camera:GetAttribute("SkippedCount")).to.equal(2)
+			expect(camera:GetAttribute("SkippedPaths")).to.equal("Lighting\nSoundService")
+			expect(typeof(camera:GetAttribute("RefreshedAt"))).to.equal("number")
+		end)
+
+		it("updates the one Camera, counts as the plugin's own, and clears", function()
+			local status = { staging = false, stagedCount = 0, skippedCount = 0, skippedPaths = {} }
+			RuntimeLoader.writeStatus(status)
+			RuntimeLoader.writeStatus(status)
+
+			local found = 0
+			for _, child in ServerStorage:GetChildren() do
+				if child.Name == RuntimeLoader.STATUS_NAME then
+					found += 1
+				end
+			end
+			expect(found).to.equal(1)
+			expect(RuntimeLoader.isPluginOwned(ServerStorage:FindFirstChild(RuntimeLoader.STATUS_NAME))).to.equal(true)
+
+			RuntimeLoader.clearStatus()
+			expect(ServerStorage:FindFirstChild(RuntimeLoader.STATUS_NAME)).to.equal(nil)
+		end)
+	end)
+
+	describe("writeOverlay", function()
+		afterEach(function()
+			RuntimeLoader.clearOverlay()
+		end)
+
+		it("counts an update whose instance is unknown without naming it or failing", function()
+			local instanceMap = InstanceMap.new(nil)
+			local patch = PatchSet.newEmpty()
+			table.insert(patch.updated, { id = "MISSING", changedProperties = {} })
+
+			local skipped, skippedPaths = RuntimeLoader.writeOverlay(patch, instanceMap)
+			expect(skipped).to.equal(1)
+			expect(#skippedPaths).to.equal(0)
+			instanceMap:stop()
+		end)
+
+		it("names a service it cannot copy, and returns nothing for an empty patch", function()
+			local instanceMap = InstanceMap.new(nil)
+			instanceMap:insert("LIGHTING", game:GetService("Lighting"))
+			local patch = PatchSet.newEmpty()
+			table.insert(patch.updated, { id = "LIGHTING", changedProperties = {} })
+
+			local skipped, skippedPaths = RuntimeLoader.writeOverlay(patch, instanceMap)
+			expect(skipped).to.equal(1)
+			expect(skippedPaths[1]).to.equal("Lighting")
+
+			local emptySkipped, emptyPaths = RuntimeLoader.writeOverlay(PatchSet.newEmpty(), instanceMap)
+			expect(emptySkipped).to.equal(0)
+			expect(#emptyPaths).to.equal(0)
+			instanceMap:stop()
+		end)
+	end)
 end

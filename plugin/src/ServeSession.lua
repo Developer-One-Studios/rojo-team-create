@@ -187,6 +187,8 @@ function ServeSession.new(options)
 		__stagedBusy = false,
 		__loaderInstalled = false,
 		__lastOverlaySkipped = nil,
+		__lastOverlaySkippedPaths = nil,
+		__projectName = nil,
 		__connections = connections,
 		__precommitCallbacks = {},
 		__postcommitCallbacks = {},
@@ -295,10 +297,12 @@ function ServeSession:start()
 		:connect()
 		:andThen(function(serverInfo)
 			self.__rootInstanceId = serverInfo.rootInstanceId
+			self.__projectName = serverInfo.projectName
 			self:setLoadingText("Loading initial data from server...")
 			return self:__initialSync(serverInfo):andThen(function()
 				self:setLoadingText("Starting sync loop...")
 				self:__setStatus(Status.Connected, serverInfo.projectName)
+				self:__writeStatus()
 				if not self.__stageChanges then
 					-- A staging session is attached to a place that's already
 					-- published, so it should keep its real IDs.
@@ -659,6 +663,7 @@ function ServeSession:__adoptStaged(staged)
 
 	self.__loaderInstalled = staged.loaderInstalled == true
 	self:__updateOverlay(staged.patch, staged.instanceMap)
+	self:__writeStatus()
 
 	Log.trace("Staged changes: {:#?}", debugPatch(staged.patch))
 
@@ -677,7 +682,7 @@ function ServeSession:__updateOverlay(patch, instanceMap)
 		return
 	end
 
-	local success, skippedOrError = pcall(RuntimeLoader.writeOverlay, patch, instanceMap)
+	local success, skippedOrError, skippedPaths = pcall(RuntimeLoader.writeOverlay, patch, instanceMap)
 	if not success then
 		Log.warn("Could not prepare staged changes for playtests: {}", skippedOrError)
 	elseif skippedOrError ~= self.__lastOverlaySkipped and skippedOrError > 0 then
@@ -689,6 +694,29 @@ function ServeSession:__updateOverlay(patch, instanceMap)
 	end
 
 	self.__lastOverlaySkipped = if success then skippedOrError else nil
+	self.__lastOverlaySkippedPaths = if success then skippedPaths else nil
+end
+
+--[[
+	Keeps the status Camera matching this session while it's connected.
+	Playtests start sessions of their own, which have nothing to report.
+]]
+function ServeSession:__writeStatus()
+	if self.__status ~= Status.Connected or not RunService:IsEdit() then
+		return
+	end
+
+	local overlayWritten = self.__stageChanges and self.__loaderInstalled
+	local success, err = pcall(RuntimeLoader.writeStatus, {
+		projectName = self.__projectName,
+		staging = self.__stageChanges,
+		stagedCount = if self.__stageChanges then PatchSet.countInstances(self.__stagedPatch) else 0,
+		skippedCount = if overlayWritten then self.__lastOverlaySkipped or 0 else 0,
+		skippedPaths = if overlayWritten then self.__lastOverlaySkippedPaths or {} else {},
+	})
+	if not success then
+		Log.warn("Could not update the session status: {}", err)
+	end
 end
 
 function ServeSession:isLoaderInstalled(): boolean
@@ -937,6 +965,7 @@ function ServeSession:__stopInternal(err)
 		-- Without a session, playtests should use the deployed code.
 		RuntimeLoader.clearOverlay()
 	end
+	RuntimeLoader.clearStatus()
 end
 
 function ServeSession:__setStatus(status, detail)

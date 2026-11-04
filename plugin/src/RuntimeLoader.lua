@@ -32,6 +32,9 @@ local setProperty = require(script.Parent.Reconciler.setProperty)
 
 local LOADER_NAME = "ROJO_TEAM_CREATE_LOADER"
 local OVERLAY_NAME = "ROJO_TEAM_CREATE_LOCAL"
+local STATUS_NAME = "ROJO_TEAM_CREATE_STATUS"
+-- Only the first few are named, which keeps the attribute readable in the Properties panel.
+local MAX_SKIPPED_PATHS = 20
 local ENABLE_TAG = "RojoTeamCreateEnable"
 
 -- Folders inside the overlay. These have to match the loader's source.
@@ -197,10 +200,8 @@ end
 function RuntimeLoader.isPluginOwned(instance: Instance): boolean
 	local success, owned = pcall(function()
 		return (RuntimeLoader.isLoaderName(instance.Name) and instance.Parent == ServerScriptService)
-			or (
-				(instance.Name == OVERLAY_NAME or LEGACY_OVERLAY_NAMES[instance.Name] == true)
-				and instance.Parent == ServerStorage
-			)
+			or ((instance.Name == OVERLAY_NAME or LEGACY_OVERLAY_NAMES[instance.Name] == true) and instance.Parent == ServerStorage)
+			or (instance.Name == STATUS_NAME and instance.Parent == ServerStorage)
 	end)
 
 	return success and owned
@@ -335,6 +336,46 @@ function RuntimeLoader.getScriptConversion(patch)
 	return conversion
 end
 
+RuntimeLoader.STATUS_NAME = STATUS_NAME
+
+--[[
+	Shows tools outside the plugin what this session is doing, so they can
+	tell a connected session with nothing staged from no session at all.
+	Team Create doesn't replicate Cameras, and this one isn't archivable, so
+	it's never saved, published or copied into playtests.
+]]
+function RuntimeLoader.writeStatus(status: {
+	projectName: string?,
+	staging: boolean,
+	stagedCount: number,
+	skippedCount: number,
+	skippedPaths: { string },
+})
+	local camera = ServerStorage:FindFirstChild(STATUS_NAME)
+	if camera == nil or not camera:IsA("Camera") then
+		camera = Instance.new("Camera")
+		camera.Name = STATUS_NAME
+		camera.Archivable = false
+		camera.Parent = ServerStorage
+	end
+
+	camera:SetAttribute("Connected", true)
+	camera:SetAttribute("ProjectName", status.projectName)
+	camera:SetAttribute("Staging", status.staging)
+	camera:SetAttribute("StagedCount", status.stagedCount)
+	camera:SetAttribute("SkippedCount", status.skippedCount)
+	camera:SetAttribute("SkippedPaths", table.concat(status.skippedPaths, "\n"))
+	camera:SetAttribute("RefreshedAt", DateTime.now().UnixTimestampMillis / 1000)
+end
+
+function RuntimeLoader.clearStatus()
+	for _, child in ServerStorage:GetChildren() do
+		if child.Name == STATUS_NAME and child:IsA("Camera") then
+			child:Destroy()
+		end
+	end
+end
+
 function RuntimeLoader.clearOverlay()
 	for _, child in ServerStorage:GetChildren() do
 		if (child.Name == OVERLAY_NAME or LEGACY_OVERLAY_NAMES[child.Name] == true) and child:IsA("Camera") then
@@ -417,16 +458,23 @@ end
 
 --[[
 	Rebuilds the overlay so that it matches the staged patch. Returns how many
-	staged changes couldn't be included.
+	staged changes couldn't be included, and the paths of the first few.
 ]]
-function RuntimeLoader.writeOverlay(patch, instanceMap): number
+function RuntimeLoader.writeOverlay(patch, instanceMap): (number, { string })
 	RuntimeLoader.clearOverlay()
 
 	if PatchSet.isEmpty(patch) then
-		return 0
+		return 0, {}
 	end
 
 	local skipped = 0
+	local skippedPaths = {}
+	local function skip(count: number, path: string?)
+		skipped += count
+		if path ~= nil and #skippedPaths < MAX_SKIPPED_PATHS then
+			table.insert(skippedPaths, path)
+		end
+	end
 
 	local overlay = Instance.new("Camera")
 	overlay.Name = OVERLAY_NAME
@@ -452,14 +500,18 @@ function RuntimeLoader.writeOverlay(patch, instanceMap): number
 
 	for _, update in patch.updated do
 		local instance = instanceMap.fromIds[update.id]
-		if instance == nil or not canReplace(instance) then
-			skipped += 1
+		if instance == nil then
+			skip(1, nil)
+			continue
+		end
+		if not canReplace(instance) then
+			skip(1, instance:GetFullName())
 			continue
 		end
 
 		local replacement = buildReplacement(instance, update, instanceMap)
 		if replacement == nil then
-			skipped += 1
+			skip(1, instance:GetFullName())
 			continue
 		end
 
@@ -480,12 +532,15 @@ function RuntimeLoader.writeOverlay(patch, instanceMap): number
 
 		local parent = instanceMap.fromIds[virtualInstance.Parent]
 		if parent == nil then
-			skipped += 1
+			skip(1, virtualInstance.Name)
 			continue
 		end
 
 		local failed = reify.reifyInstance(deferredRefs, scratchMap, patch.added, id, createEntry(addFolder, parent))
-		skipped += PatchSet.countInstances(failed)
+		local failedCount = PatchSet.countInstances(failed)
+		if failedCount > 0 then
+			skip(failedCount, parent:GetFullName() .. "." .. virtualInstance.Name)
+		end
 	end
 	reify.applyDeferredRefs(scratchMap, deferredRefs, PatchSet.newEmpty())
 
@@ -500,7 +555,7 @@ function RuntimeLoader.writeOverlay(patch, instanceMap): number
 
 	overlay.Parent = ServerStorage
 
-	return skipped
+	return skipped, skippedPaths
 end
 
 return RuntimeLoader
